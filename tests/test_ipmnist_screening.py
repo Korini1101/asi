@@ -5150,6 +5150,62 @@ class TestDiscoveredRuleFactoryWave2:
         assert float(new_state.nb_count[2]) == pytest.approx(1.0)
         assert all(bool(jnp.isfinite(m)) for m in metrics)
 
+    def test_compiled_nb_vote_reports_the_reference_ensemble_accuracy(self) -> None:
+        """Compiled discovered-rule NB vote must not flip screening accuracy.
+
+        Regression for the screening twin of SlopDotCash/asi#2886: with
+        ``flag_nb_member`` on, ``_make_discovered_rule_learner`` feeds
+        ``log_softmax(nb_ll / float(input_dim))`` into the combined vote that
+        becomes ``metrics[0]`` (the arm's online accuracy). For a
+        non-power-of-two feature count the quotient is an inexact reciprocal
+        multiply; past ``|nb_ll / scale| ~ 2**31`` the compiled vote is
+        all-``-inf`` while eager stays finite, so ``argmax`` is 0 and the
+        reported accuracy is silently 0. The screening runner jits the step,
+        so the probe is per-row ``jax.jit(step_fn)``. Independent float64
+        ``nb_ll`` identifies the vote winner without the production helper.
+        """
+        import dataclasses as _dc
+
+        from alberta_framework.benchmarks.ipmnist_screening import (
+            _DISCOVERED_NB_VAR_FLOOR,
+            _make_discovered_rule_learner,
+        )
+
+        init_fn, step_fn = _make_discovered_rule_learner(
+            self._hp(flag_nb_member=1.0)
+        )
+        config, params = self._setup(seed=23)
+        state = init_fn(params)
+        n_features = config.input_dim
+        n_classes = config.n_classes
+        x_mean_gap = 100.0
+        obs_value = 5.0e3
+        nb_var = jnp.full((n_classes, n_features), _DISCOVERED_NB_VAR_FLOOR)
+        nb_mean = jnp.asarray(
+            np.tile(
+                np.arange(n_classes, dtype=np.float64) * x_mean_gap,
+                (n_features, 1),
+            ).T,
+            dtype=jnp.float32,
+        )
+        x = jnp.full((n_features,), obs_value, dtype=jnp.float32)
+        y = jnp.asarray(n_classes - 1, dtype=jnp.int32)
+        extreme_state = _dc.replace(state, nb_mean=nb_mean, nb_var=nb_var)
+
+        x64 = np.asarray(x, dtype=np.float64)
+        mean64 = np.asarray(nb_mean, dtype=np.float64)
+        var64 = float(_DISCOVERED_NB_VAR_FLOOR)
+        nb_ll64 = -0.5 * np.sum(
+            np.log(var64) + (x64[None, :] - mean64) ** 2 / var64, axis=1
+        )
+        scale = float(n_features)
+        assert int(np.argmax(nb_ll64 / scale)) == int(y)
+        assert np.min(np.abs(nb_ll64)) / scale > 2.0**31
+
+        _, _, metrics = jax.jit(step_fn)(params, extreme_state, x, y, jr.key(0))
+        assert bool(jnp.isfinite(metrics[0]))
+        assert float(metrics[0]) == 1.0
+
     def test_rls_head_updates_and_shift_reset_p(self):
         import dataclasses as _dc
 
