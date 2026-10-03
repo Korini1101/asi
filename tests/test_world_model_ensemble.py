@@ -208,6 +208,42 @@ def test_init_uses_distinct_member_keys_and_isolated_real_replay_mask_keys() -> 
     )
 
 
+def test_init_rejects_rbg_key_that_fails_the_static_bootstrap_contract() -> None:
+    """RBG init must not return a state the published static contract rejects.
+
+    ``jr.split`` / ``jr.fold_in`` accept a typed RBG key, so ``init`` can
+    construct member and mask streams. The keys it would store then fail the
+    existing ``key_data`` shape/dtype check used by ``state_valid`` and
+    ``resource_budget``. Reject that key at ``init`` instead of handing back
+    an unusable state. Legacy ``jr.PRNGKey`` remains a (2,) uint32 Threefry
+    word payload and stays accepted.
+    """
+    ensemble = WorldModelEnsemble(_config())
+    rbg = jr.key(7, impl="rbg")
+    rbg_words = jr.key_data(rbg)
+    assert rbg_words.shape != (2,) or rbg_words.dtype != jnp.uint32
+
+    split_keys = jr.split(rbg, ensemble.config.ensemble_size + 1)
+    replay_key = jr.fold_in(rbg, 0x5245504C)
+    for stored in (split_keys[-1], replay_key):
+        stored_words = jr.key_data(stored)
+        assert stored_words.shape != (2,) or stored_words.dtype != jnp.uint32
+
+    good = ensemble.init(jr.key(7))
+    with pytest.raises(ValueError, match="must be one JAX PRNG key"):
+        ensemble.state_valid(good.replace(bootstrap_key=split_keys[-1]))
+    with pytest.raises(ValueError, match="must be one JAX PRNG key"):
+        ensemble.resource_budget(good.replace(replay_bootstrap_key=replay_key))
+
+    with pytest.raises(ValueError, match="must be one JAX PRNG key"):
+        ensemble.init(rbg)
+
+    legacy = ensemble.init(jr.PRNGKey(7))
+    assert bool(ensemble.state_valid(legacy))
+    budget = ensemble.resource_budget(legacy)
+    assert budget.persistent_state_bytes == ensemble.resource_budget(good).persistent_state_bytes
+
+
 def test_resource_budget_counts_member_lifetime_words_and_matches_state() -> None:
     ensemble = WorldModelEnsemble(_config())
     state = ensemble.init(jr.key(0))
