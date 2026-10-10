@@ -26,3 +26,11 @@ consumer, causal question, live matched baseline and bounded resource plan.
 | [#1568](https://github.com/SlopDotCash/asi/issues/1568) | not planned | A new prospective meta-diagnostic campaign has no demonstrated decision consumer or current bottleneck beyond existing loss/rank/gradient diagnostics. The equation utility remains available; another standalone diagnostic framework is not useful progress before whole-agent measurement. |
 | [#1570](https://github.com/SlopDotCash/asi/issues/1570) | not planned | BiMU implementation and isolated binary/Bayesian metric audit already exist. Its task protocol and late-five metric do not compare with the current real-valued control, and there is no integrated consumer. Do not launch another disconnected long campaign merely to complete a paper checklist; preserve the audited implementation and explicit gaps. |
 | [#1584](https://github.com/SlopDotCash/asi/issues/1584) | not planned | Retire the obsolete frozen Forager rerun contract: its exact OCI config digest is absent and a rebuilt image cannot satisfy that contract. Preserve frozen artifacts, the reconstruction audit, and local successor development work unchanged. Future Forager work must use its own current-source protocol and concrete integration question; this closure is not a completed Forager comparison. |
+| [#1561](https://github.com/SlopDotCash/asi/issues/1561) | completed | Merged PR #3098: audited 25 supervised and 40 TD/control historical records, plus the missing tested TD implementation. Both registered configurations lose to matched controls. |
+| [#1562](https://github.com/SlopDotCash/asi/issues/1562) | completed | Merged PR #3098: verified all 20 original rows and their recorded strict reexecutions, source hashes, resource accounting and negative decision; fixed the canonical dataset contiguity bug. |
+
+New COOM, native-suite, corrected three-layer plasticity and corrected-clock CPR
+results are retained under `outputs/coom_runtime_qualification/`,
+`outputs/native_and_plasticity_qualification/`, and `outputs/cpr_corrected_clock/`.
+The 144-shard reference-life run is still in progress; no aggregate outcome is
+asserted before its complete validation.
