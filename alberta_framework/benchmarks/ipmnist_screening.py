@@ -3652,6 +3652,11 @@ def guarded_adam_update(
 def _make_guarded_cbp_adam_learner(
     hp: Mapping[str, float],
 ) -> tuple[LearnerInitFn, ScreeningStepFn]:
+    # Use the control graph for the exact mechanism-off reduction. Keeping
+    # dead guard state changes XLA fusion and can perturb plasticity telemetry.
+    if hp["guard_scale"] == 0.0:
+        return _make_adamw_cbp_learner(hp)
+
     def init_fn(params: dict[str, Array]) -> GuardedAdamCBPState:
         zeros = {name: jnp.zeros_like(value) for name, value in params.items()}
         return GuardedAdamCBPState(  # type: ignore[call-arg]
