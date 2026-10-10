@@ -29,6 +29,12 @@ consumer, causal question, live matched baseline and bounded resource plan.
 | [#1561](https://github.com/SlopDotCash/asi/issues/1561) | completed | Merged PR #3098: audited 25 supervised and 40 TD/control historical records, plus the missing tested TD implementation. Both registered configurations lose to matched controls. |
 | [#1562](https://github.com/SlopDotCash/asi/issues/1562) | completed | Merged PR #3098: verified all 20 original rows and their recorded strict reexecutions, source hashes, resource accounting and negative decision; fixed the canonical dataset contiguity bug. |
 
+
+| [#1563](https://github.com/SlopDotCash/asi/issues/1563) | completed | Existing CPR implementation measured on the corrected pre-update clock: 25 matched shards, five arms and five development seeds. CPR improves on off but loses to L2 and utility-free controls; the frozen selection rule is not passed. The excluded source-drift attempt is retained separately. |
+| [#1578](https://github.com/SlopDotCash/asi/issues/1578) | completed | Four native real-data protocols across four development seeds, 16 typed records and 16 exact fresh-process replay records. Protocol/resource differences are explicit; no Avalanche parity or cross-suite winner is claimed. |
+| [#1582](https://github.com/SlopDotCash/asi/issues/1582) | completed | Rebuilt the locked COOM/ViZDoom image and retained two matching real-engine CO8 fixed-action traces, strict in-image validation, source/assets and resource bounds. This closes runtime qualification, not a SAC learning comparison. |
+| [#1583](https://github.com/SlopDotCash/asi/issues/1583) | not planned | Retain four useful current-schema three-layer fixed-label MNIST diagnostic records, typed per-layer resources and exact SGD/mechanism-off reduction. These do not satisfy the issue’s explicitly requested random-label protocol. Retire the broader random-label/ImageNet/RL reproduction program because it has no present integrated decision consumer or demonstrated bottleneck; do not report it completed. |
+
 New COOM, native-suite, corrected three-layer plasticity and corrected-clock CPR
 results are retained under `outputs/coom_runtime_qualification/`,
 `outputs/native_and_plasticity_qualification/`, and `outputs/cpr_corrected_clock/`.
