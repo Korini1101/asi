@@ -2554,6 +2554,24 @@ _DISCOVERED_LAYER_EXPONENT: dict[str, float] = {
 }
 
 
+def _nb_vote_log_probs(nb_ll: Array, scale: float) -> Array:
+    """Naive-Bayes ensemble vote log-probabilities, compiled-stable.
+
+    ``log_softmax(nb_ll / scale)`` with a non-power-of-two feature count is
+    the screening twin of issue 2886: XLA recomputes the inexact reciprocal
+    multiply inside both softmax fusions, so past ``|nb_ll / scale| ~ 2**31``
+    the compiled vote is all-``-inf`` while eager stays finite. The compiled
+    ``argmax`` is then 0 and ``metrics[0]`` (online accuracy) is silently
+    wrong. Subtracting a maximum on both sides of the scale blocks both
+    recomputations; log-softmax is shift-invariant, so both subtractions are
+    exact. ``stop_gradient`` keeps the maxima out of any differentiation
+    through the vote.
+    """
+    centered = nb_ll - jax.lax.stop_gradient(jnp.max(nb_ll))
+    scaled = centered / scale
+    return jax.nn.log_softmax(scaled - jax.lax.stop_gradient(jnp.max(scaled)))
+
+
 def _discovered_rule_hp(**overrides: float) -> dict[str, float]:
     """Discovered-rule hyperparameters: champion-form constants + inert flags."""
     merged = dict(_DISCOVERED_RULE_DEFAULTS)
@@ -2858,7 +2876,7 @@ def _make_discovered_rule_learner(
                     + (x_used[None, :] - state.nb_mean) ** 2 / nb_var_safe,
                     axis=1,
                 )
-                members.append(jax.nn.log_softmax(nb_ll / float(x_used.shape[0])))
+                members.append(_nb_vote_log_probs(nb_ll, float(x_used.shape[0])))
                 weights.append(state.member_acc[2])
             w_sum = sum(weights) + 1e-8
             combined = sum(w * s for w, s in zip(weights, members)) / w_sum
