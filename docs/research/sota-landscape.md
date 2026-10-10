@@ -136,8 +136,10 @@ local same-runner development ranking, not a paper-level SOTA claim.
   Eq. 5, not a reproduction of the paper: they control current-example
   correct-class log probability, omit RL eligibility traces, and include
   diagonal-normalization, clipping, fixed-step, and head-only feature
-  controls. The implementation and its tests are development infrastructure;
-  no screening result exists until a matched campaign is run.
+  controls. The retained [supervised campaign](../../outputs/ipmnist_screening/intentional_updates_r1/RESULTS.md)
+  and [linear TD/control campaign](../../outputs/intentional_td_development_v1/REPORT.md)
+  both reject their registered configurations against matched controls. These
+  historical, source-bound development outcomes do not select a reference agent.
 - [Optimization Readiness](https://arxiv.org/abs/2605.09044v1) evaluates whether
   a checkpoint diagnostic prospectively ranks future relative loss reduction.
   Its empirical estimator uses a full-validation-set gradient for gradient
