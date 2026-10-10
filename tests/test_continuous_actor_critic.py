@@ -155,7 +155,7 @@ def test_continuous_actor_critic_scores_match_policy_log_probability(log_sigma: 
     state = agent.init(feature_dim=2, key=jr.key(150))
     mean, sigma = agent.policy_params(state, obs)
     action = mean + sigma * jnp.array([-2.0, 0.0, 2.0], dtype=jnp.float32)
-    state = state.replace(last_observation=obs, last_action=action)
+    state = state.replace(last_observation=obs, last_action=action, last_sample=action)
 
     def log_probability(mean: jax.Array, log_std: jax.Array) -> jax.Array:
         return jax.scipy.stats.norm.logpdf(action, mean, jnp.exp(log_std)).sum()
@@ -226,7 +226,9 @@ def test_continuous_actor_critic_nonfinite_mean_score_rolls_back(terminated: boo
     obs = jnp.ones(1)
     state = agent.init(feature_dim=1, key=jr.key(153))
     _, sigma = agent.policy_params(state, obs)
-    state = state.replace(last_observation=obs, last_action=100.0 * sigma)
+    state = state.replace(
+        last_observation=obs, last_action=100.0 * sigma, last_sample=100.0 * sigma
+    )
     result = jax.jit(agent.update)(
         state, jnp.array(1.0), jnp.zeros_like(obs), terminated=jnp.array(terminated)
     )
