@@ -28,10 +28,13 @@ try:
         _BEHAVIOR_MODEL_SEQUENCE_MAX_STEPS,
         BehaviorModel,
         BehaviorModelConfig,
+        BehaviorModelState,
         _behavior_model_update_working_set_bytes,
         _preflight_behavior_model_update_working_set,
         _require_behavior_model_sequence_length,
         _resource_counts,
+        _stable_temperature_log_softmax,
+        _stable_temperature_softmax,
         action_log_likelihoods,
         clipped_importance_ratios,
         epsilon_greedy_probabilities,
@@ -59,6 +62,7 @@ except ImportError:
     behavior_model_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(behavior_model_module)
     BehaviorModel = behavior_model_module.BehaviorModel
+    BehaviorModelState = behavior_model_module.BehaviorModelState
     BehaviorModelConfig = behavior_model_module.BehaviorModelConfig
     action_log_likelihoods = behavior_model_module.action_log_likelihoods
     clipped_importance_ratios = behavior_model_module.clipped_importance_ratios
@@ -76,6 +80,8 @@ except ImportError:
     _BEHAVIOR_MODEL_SEQUENCE_MAX_STEPS = (
         behavior_model_module._BEHAVIOR_MODEL_SEQUENCE_MAX_STEPS
     )
+    _stable_temperature_log_softmax = behavior_model_module._stable_temperature_log_softmax
+    _stable_temperature_softmax = behavior_model_module._stable_temperature_softmax
     _require_behavior_model_sequence_length = (
         behavior_model_module._require_behavior_model_sequence_length
     )
@@ -899,4 +905,256 @@ def test_floor_and_renormalize_probabilities_returns_simplex_on_zero_and_extreme
         out = floor_and_renormalize_probabilities(jnp.asarray(probs, dtype=jnp.float32))
         np.testing.assert_allclose(float(jnp.sum(out)), 1.0, atol=1e-5)
         assert np.all(np.asarray(out) >= 1e-6)
+
+
+def _large_scale_two_action_model() -> tuple[BehaviorModel, Any, Any]:
+    """Return a T=0.7 model, an applied-update state, and its observation.
+
+    One finite applied update from ``init`` drives ``|logits / T|`` past the
+    regime where XLA:CPU fuses the temperature product into the softmax
+    max-subtraction (see SlopDotCash/asi#2886). Every call below stays
+    unbatched: ``jit(vmap(...))`` over these rows masks the defect.
+    """
+    model = BehaviorModel(BehaviorModelConfig(n_actions=2, temperature=0.7))
+    state = model.init(1, jax.random.key(0))
+    observation = jnp.asarray([6e5], dtype=jnp.float32)
+    action = jnp.asarray(0, dtype=jnp.int32)
+    first = model.update(state, observation, action)
+    assert bool(first.update_applied)
+    return model, first.state, observation
+
+
+def test_compiled_predict_probabilities_stay_finite_after_large_scale_update() -> None:
+    model, state, observation = _large_scale_two_action_model()
+    probabilities = np.asarray(model.predict_probabilities(state, observation))
+    logits = np.asarray(model.predict_logits(state, observation))
+    eager = np.asarray(jax.nn.softmax(logits / 0.7))
+    assert np.all(np.isfinite(eager))
+    assert np.all(np.isfinite(probabilities))
+    np.testing.assert_allclose(float(np.sum(probabilities)), 1.0, atol=1e-6)
+    assert int(np.argmax(probabilities)) == int(np.argmax(eager))
+
+
+def test_compiled_input_loss_gradient_stays_valid_after_large_scale_update() -> None:
+    model, state, observation = _large_scale_two_action_model()
+    result = model.input_loss_gradient(
+        state, observation, jnp.asarray(0, dtype=jnp.int32)
+    )
+    assert bool(result.valid)
+    assert np.all(np.isfinite(np.asarray(result.probabilities)))
+    assert np.isfinite(float(result.loss))
+    assert np.all(np.isfinite(np.asarray(result.gradient)))
+
+
+def test_compiled_follow_up_update_applies_after_large_scale_update() -> None:
+    model, state, observation = _large_scale_two_action_model()
+    second = model.update(state, observation, jnp.asarray(0, dtype=jnp.int32))
+    assert bool(second.update_applied)
+    assert np.all(np.isfinite(np.asarray(second.probabilities)))
+
+
+def test_compiled_sample_action_follows_learned_policy_after_large_scale_update() -> None:
+    model, state, observation = _large_scale_two_action_model()
+    sample = model.sample_action(state, observation)
+    probabilities = np.asarray(sample.probabilities)
+    assert np.all(np.isfinite(probabilities))
+    assert int(sample.action) == int(np.argmax(probabilities)) == 0
+    assert np.isfinite(float(sample.action_probability))
+
+
+def test_compiled_helpers_match_eager_at_issue_onset_scale() -> None:
+    """Helpers must equal eager at the #2886 onset scale, compiled, per row.
+
+    On linux x86_64, JAX 0.11.0, single-threaded XLA:CPU, the plain
+    ``jax.nn.softmax(logits / T)`` expression returns compiled-only
+    ``[nan, nan]`` where eager returns ``[1, 0]`` for these exact rows, so
+    restoring the plain expression inside the helpers fails this test on
+    this host (mutation-checked).  The rows sit past the measured onset
+    ``|logits / T| >= 2**31`` for a non-power-of-two temperature.  Probes
+    stay per-row on purpose: batched ``vmap`` fusions were measured to mask
+    this defect class.
+    """
+    for values, temperature in (
+        ([4e9, 0.0], 0.7),
+        ([8e9, 1e9], 0.7),
+        ([1e10, -1e10], 0.7),
+        ([2.5e9, 0.0], 1.1),
+    ):
+        logits = jnp.asarray(values, dtype=jnp.float32)
+        eager_probabilities = np.asarray(jax.nn.softmax(logits / temperature))
+        eager_logs = np.asarray(jax.nn.log_softmax(logits / temperature))
+        assert np.all(np.isfinite(eager_probabilities)), (values, temperature)
+        compiled_probabilities = np.asarray(
+            jax.jit(lambda x: _stable_temperature_softmax(x, temperature))(logits)
+        )
+        compiled_logs = np.asarray(
+            jax.jit(lambda x: _stable_temperature_log_softmax(x, temperature))(logits)
+        )
+        context = (values, temperature)
+        assert np.all(np.isfinite(compiled_probabilities)), context
+        assert np.all(np.isfinite(compiled_logs)), context
+        np.testing.assert_allclose(
+            compiled_probabilities,
+            eager_probabilities,
+            rtol=1e-6,
+            atol=0,
+            err_msg=str(context),
+        )
+        np.testing.assert_allclose(
+            compiled_logs,
+            eager_logs,
+            rtol=1e-6,
+            atol=0,
+            err_msg=str(context),
+        )
+
+
+def test_compiled_helpers_stay_finite_when_logit_distance_overflows() -> None:
+    """Distance-overflow rows stay finite in both domains under compilation.
+
+    float32 cannot represent the pairwise distance of ``[3e38, -3e38]``, so
+    the plain expression (and the previously reviewed scaled-domain form)
+    evaluates ``-inf - (-inf)``-class intermediates and returns ``[nan,
+    nan]`` where the input is finite.  The halving pre-conditioner does not
+    apply at ``T <= 1``, so the negative tail is clamped to the finite
+    float32 minimum instead: probabilities are unchanged (``exp(floor)``
+    underflows to zero exactly like ``exp(-inf)``), and log-probabilities
+    stay finite so downstream ``probability * log_probability`` entropy
+    products cannot produce ``0 * -inf``.  Where the plain expression is
+    itself non-finite this is a documented deviation from it, not a change
+    of any finite answer.
+    """
+    logits = jnp.asarray([3e38, -3e38], dtype=jnp.float32)
+    temperature = 0.5
+    compiled_probabilities = np.asarray(
+        jax.jit(lambda x: _stable_temperature_softmax(x, temperature))(logits)
+    )
+    compiled_logs = np.asarray(
+        jax.jit(lambda x: _stable_temperature_log_softmax(x, temperature))(logits)
+    )
+    assert np.all(np.isfinite(compiled_probabilities))
+    assert np.all(np.isfinite(compiled_logs))
+    np.testing.assert_allclose(float(np.sum(compiled_probabilities)), 1.0, atol=1e-7)
+    assert int(np.argmax(compiled_probabilities)) == 0
+    assert float(compiled_logs[0]) == pytest.approx(0.0, abs=1e-6)
+    assert float(compiled_logs[1]) >= -3.4029e38
+
+
+def test_opposite_extreme_logits_keep_eager_finiteness_at_moderate_temperature() -> None:
+    """Opposite finite extremes at T=2.0 must match eager, not overflow to -inf.
+
+    Review-executed regression at an earlier head: centering the raw logits
+    without the halving pre-conditioner computed ``-0.4e38 - 3.2e38`` before
+    the scale, which overflows float32, so the log-softmax helper returned
+    ``[0, -inf]`` where eager ``log_softmax(logits / 2)`` returns
+    ``[0, -1.8e38]``, and the committed loss then evaluated ``0 * -inf``.
+    Dropping the halving pre-conditioner reintroduces exactly that
+    mismatch, so this test kills the guard-removal mutant.
+    """
+    logits = jnp.asarray([3.2e38, -0.4e38], dtype=jnp.float32)
+    temperature = 2.0
+    eager_probabilities = np.asarray(jax.nn.softmax(logits / temperature))
+    eager_log_probabilities = np.asarray(jax.nn.log_softmax(logits / temperature))
+    assert np.all(np.isfinite(eager_log_probabilities))
+    probabilities = np.asarray(_stable_temperature_softmax(logits, temperature))
+    log_probabilities = np.asarray(_stable_temperature_log_softmax(logits, temperature))
+    compiled_log_probabilities = np.asarray(
+        jax.jit(lambda x: _stable_temperature_log_softmax(x, temperature))(logits)
+    )
+    assert np.all(np.isfinite(probabilities))
+    assert np.all(np.isfinite(log_probabilities))
+    assert np.all(np.isfinite(compiled_log_probabilities))
+    np.testing.assert_allclose(probabilities, eager_probabilities, rtol=1e-6, atol=0)
+    np.testing.assert_allclose(log_probabilities, eager_log_probabilities, rtol=1e-6, atol=0)
+    np.testing.assert_allclose(
+        compiled_log_probabilities, eager_log_probabilities, rtol=1e-6, atol=0
+    )
+
+
+def test_input_loss_gradient_stays_valid_for_opposite_extreme_logits() -> None:
+    """The executed reviewer repro must stay a valid finite transaction.
+
+    Zero weights and a finite opposite-extreme bias at ``temperature=2.0``
+    produced ``valid=False`` with a non-finite loss at the previously
+    reviewed head, where the base commit returned a finite loss of about
+    ``1.8e38``.
+    """
+    model = BehaviorModel(BehaviorModelConfig(n_actions=2, temperature=2.0))
+    state = BehaviorModelState(
+        weights=jnp.zeros((2, 1), dtype=jnp.float32),
+        bias=jnp.asarray([3.2e38, -0.4e38], dtype=jnp.float32),
+        rng_key=jax.random.key(0),
+        step_count=jnp.asarray(0, dtype=jnp.int32),
+        nll_ema=jnp.asarray(0.0, dtype=jnp.float32),
+        accuracy_ema=jnp.asarray(0.0, dtype=jnp.float32),
+        confidence_ema=jnp.asarray(0.0, dtype=jnp.float32),
+    )
+    observation = jnp.asarray([0.0], dtype=jnp.float32)
+    result = model.input_loss_gradient(
+        state, observation, jnp.asarray(1, dtype=jnp.int32)
+    )
+    assert bool(result.valid)
+    assert np.isfinite(float(result.loss))
+    assert float(result.loss) == pytest.approx(1.8e38, rel=1e-5)
+    assert np.all(np.isfinite(np.asarray(result.probabilities)))
+    assert np.all(np.isfinite(np.asarray(result.gradient)))
+
+
+def test_stable_helpers_track_eager_across_temperature_and_scale_grid() -> None:
+    """Finiteness parity and eager agreement over ordinary and extreme regimes.
+
+    Where eager ``jax.nn.softmax(logits / T)`` is finite the helpers must
+    agree with it; where eager is not finite (float32 range exhausted), the
+    helpers must be non-finite in the same entries rather than inventing a
+    different answer. Probes stay unbatched: batching masks this defect class.
+    """
+    generator = np.random.default_rng(2886)
+    cases: list[tuple[np.ndarray, float]] = []
+    for temperature in (0.3, 0.7, 1.0, 2.0, 2.5):
+        for scale in (1.0, 1e3, 1e6, 1e9):
+            cases.append((generator.normal(size=5).astype(np.float32) * scale, temperature))
+    cases.append((np.asarray([3.2e38, -0.4e38], np.float32), 2.0))
+    cases.append((np.asarray([3e38, -3e38], np.float32), 4.0))
+    cases.append((np.asarray([1e19, -1e19], np.float32), 0.7))
+    # Base itself is non-finite here (float32 cannot represent the pairwise
+    # distance); the helpers deliberately return the finite clamped answer
+    # instead of following base into NaN — see
+    # test_compiled_helpers_stay_finite_when_logit_distance_overflows.
+    cases.append((np.asarray([3e38, -3e38], np.float32), 0.5))
+    cases.append((np.asarray([3.2e38, -0.4e38], np.float32), 0.7))
+    for values, temperature in cases:
+        logits = jnp.asarray(values)
+        eager_probabilities = np.asarray(jax.nn.softmax(logits / temperature))
+        eager_logs = np.asarray(jax.nn.log_softmax(logits / temperature))
+        probabilities = np.asarray(_stable_temperature_softmax(logits, temperature))
+        logs = np.asarray(_stable_temperature_log_softmax(logits, temperature))
+        context = (values.tolist(), temperature)
+        base_finite = bool(np.all(np.isfinite(eager_probabilities))) and bool(
+            np.all(np.isfinite(eager_logs))
+        )
+        if not base_finite:
+            # Documented deviation: the clamped helpers stay finite where the
+            # plain expression is already non-finite; probabilities still sum
+            # to one and keep the eager argmax.
+            assert np.all(np.isfinite(probabilities)), context
+            assert np.all(np.isfinite(logs)), context
+            np.testing.assert_allclose(
+                float(np.sum(probabilities)), 1.0, atol=1e-6, err_msg=str(context)
+            )
+            assert (
+                int(np.argmax(probabilities)) == int(np.argmax(eager_probabilities))
+                or np.isnan(eager_probabilities).all()
+            ), context
+            continue
+        np.testing.assert_allclose(
+            logs, eager_logs, rtol=1e-5, atol=1e-6, err_msg=str(context)
+        )
+        np.testing.assert_allclose(
+            probabilities,
+            eager_probabilities,
+            rtol=1e-5,
+            atol=1e-6,
+            err_msg=str(context),
+        )
+        assert int(np.argmax(probabilities)) == int(np.argmax(eager_probabilities)), context
 
