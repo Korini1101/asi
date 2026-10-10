@@ -14,7 +14,7 @@ from alberta_framework.core.off_policy_horde import (
     OffPolicyHordeUpdateResult,
     run_off_policy_horde_learning_loop,
 )
-from alberta_framework.core.optimizers import LMS, ObGDBounding
+from alberta_framework.core.optimizers import LMS, AGCBounding, ObGDBounding
 from alberta_framework.core.types import DemonType, GVFSpec, HordeSpec, TraceMode, create_horde_spec
 
 
@@ -164,6 +164,69 @@ def test_infinite_cumulant_with_obgd_does_not_poison_head() -> None:
     chex.assert_tree_all_finite(recovered.state.head_params)
     assert bool(recovered.update_applied)
     assert bool(jnp.all(recovered.head_updates_applied))
+
+
+@pytest.mark.parametrize("bounded", ["obgd", "agc_clips_nothing"])
+def test_bounder_metric_never_scales_traces(bounded: str) -> None:
+    """Bounding rescales the applied step only; traces decay by gamma*lambda.
+
+    ``Bounder.bound`` returns ``(steps, metric)`` where the metric is for
+    reporting (ObGD's step scale, AGC's clipped-unit fraction, 0.0 when
+    nothing is clipped). ``OffPolicyHordeLearner`` multiplied it into the
+    stored head traces, so AGC that clips nothing zeroed TD(lambda) and
+    ObGD attenuated traces the ObGD rule does not scale. A linear demon
+    with ``rho=1`` must match the textbook semi-gradient TD(lambda)
+    reference (ObGD scales only the applied step).
+    """
+    alpha, gamma, lamda, kappa, dim, n_steps = 0.05, 0.9, 0.8, 2.0, 3, 8
+    spec = _spec(gammas=(gamma,), lamdas=(lamda,))
+    rng = np.random.default_rng(0)
+    xs = rng.normal(size=(n_steps + 1, dim)).astype(np.float32)
+    cumulants = (3.0 * rng.normal(size=n_steps)).astype(np.float32)
+    bounder = ObGDBounding(kappa=kappa) if bounded == "obgd" else AGCBounding(clip_factor=1e6)
+    learner = OffPolicyHordeLearner(
+        spec,
+        hidden_sizes=(),
+        optimizer=LMS(step_size=alpha),
+        bounder=bounder,
+        sparsity=0.0,
+        use_layer_norm=False,
+        ratio_clip=10.0,
+        trace_ratio_clip=10.0,
+    )
+    state = learner.init(dim, jax.random.key(0))
+    w = np.asarray(state.head_params.weights[0], dtype=np.float64).reshape(-1)
+    b = float(np.asarray(state.head_params.biases[0]).reshape(-1)[0])
+    z_w, z_b = np.zeros(dim), 0.0
+    min_scale = 1.0
+    rhos = jnp.ones(1, dtype=jnp.float32)
+    for t in range(n_steps):
+        state = learner.update_with_ratios(
+            state,
+            jnp.asarray(xs[t]),
+            jnp.asarray(cumulants[t : t + 1]),
+            jnp.asarray(xs[t + 1]),
+            rhos,
+        ).state
+        x, x_next = xs[t].astype(np.float64), xs[t + 1].astype(np.float64)
+        delta = cumulants[t] + gamma * (w @ x_next + b) - (w @ x + b)
+        z_w, z_b = gamma * lamda * z_w + x, gamma * lamda * z_b + 1.0
+        scale = 1.0
+        if bounded == "obgd":
+            total = alpha * (np.abs(z_w).sum() + abs(z_b))
+            scale = 1.0 / max(kappa * max(abs(delta), 1.0) * total, 1.0)
+        min_scale = min(min_scale, scale)
+        w, b = w + scale * alpha * delta * z_w, b + scale * alpha * delta * z_b
+
+    if bounded == "obgd":
+        assert min_scale < 0.9  # the bound was active
+    else:
+        traces = np.asarray(state.head_traces[0][0], dtype=np.float64).reshape(-1)
+        assert float(np.abs(traces).sum()) > 0.0
+    coded_w = np.asarray(state.head_params.weights[0], dtype=np.float64).reshape(-1)
+    coded_b = float(np.asarray(state.head_params.biases[0]).reshape(-1)[0])
+    np.testing.assert_allclose(coded_w, w, rtol=0.0, atol=1e-4)
+    np.testing.assert_allclose(coded_b, b, rtol=0.0, atol=1e-4)
 
 
 def test_zero_discount_ignores_nonfinite_next_observation_under_jit() -> None:
