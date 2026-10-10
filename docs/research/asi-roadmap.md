@@ -246,7 +246,11 @@ dimensions. Post-hoc tradeoff weights cannot turn a regression into a win.
 
 ## Current program priorities
 
-1. **Execute the implemented Switching + RiverSwim development scorecard.** The
+1. **Resolve the measured control-calibration and candidate bottlenecks.** The
+   [completed hosted scorecard](../../outputs/reference_life_scorecard_development/run2-2026-10-09/README.md)
+   is independently validated. Its `valid_baseline_failure` decision reflects
+   nonqualifying RiverSwim controls; no candidate is selected. Use a separately
+   declared bounded investigation rather than relaxing the completed run’s gates. The
    literal-frozen L0 plan defines 144 fresh-process shards over 12 consumed
    development seeds, two environments, and Prototype, frozen/no-learning,
    random, finite-horizon privileged dynamic-programming, differential-SARSA,

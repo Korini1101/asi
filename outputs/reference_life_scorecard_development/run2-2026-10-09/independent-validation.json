@@ -1,0 +1,14 @@
+{
+  "github_run_id": "38023231911",
+  "independent_aggregate_exact_match": true,
+  "inventory_files_verified": 146,
+  "launch_sha": "30c6f016d864ba4017ecd9b43e83fb5476098463",
+  "shards_verified": 144,
+  "validation": {
+    "permanently_nonpromoting": true,
+    "plan_sha256": "4c4396848da3abebc53fb61c7b241866566ad2b44fa83ee3395a5a389a869b86",
+    "schema": "asi.reference_life_scorecard.artifact.v1",
+    "status": "valid_baseline_failure",
+    "valid": true
+  }
+}
