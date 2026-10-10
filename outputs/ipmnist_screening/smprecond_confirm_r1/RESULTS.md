@@ -17,7 +17,7 @@ standing 0.91657 (identmap_star_confirm_r1): |diff| = 1.1e-6 <= 0.001.
 |---|---|---|---|---|
 | `rls_head_resid_sm3e4_i50r` | 0.9176932 | **+0.0011243** (se 0.000109) | 20/20 (min +0.000489, max +0.002063) | MISSES +0.002 |
 
-- The effect is real (10.3x stderr, every seed positive) and too small:
+- The whole-life development difference is positive on every seed and too small:
   the preregistered CONFIRMED-WIN bar required paired mean >= +0.002.
 - 60t -> 200t decay factor: 0.005236 / 0.0011243 = **4.66x** — steeper
   than negative result #21's 3.5x. The preregistered prediction that a
@@ -25,8 +25,16 @@ standing 0.91657 (identmap_star_confirm_r1): |diff| = 1.1e-6 <= 0.001.
   transient mechanism is refuted; the gain concentrates in early life
   here too (consistent with the body's features maturing over life, after
   which per-weight step adaptation has little left to speed up).
-- No degradation signature: candidate late-window slope -1.25e-4 vs
-  control -1.03e-4; plasticity 0.00853 vs 0.00453.
+- Within the same 200-task records, the paired mean is +0.00466583
+  over tasks 0-59, then -0.00039343 over tasks 60-199 (only 5/20 seeds
+  positive in the latter window). The whole-life positive average therefore
+  hides a late-life reversal. Candidate late-window slope is -1.25e-4 versus
+  control -1.03e-4; these data do not support a no-degradation claim.
+- These observations reject this candidate at the preregistered +0.002
+  development bar. They do not establish that other step-geometry methods
+  cannot improve late-life performance. The summary's generic 0.005
+  `confirmation_threshold` is not the preregistered decision rule here.
+
 
 ## Disposition (preregistered)
 
