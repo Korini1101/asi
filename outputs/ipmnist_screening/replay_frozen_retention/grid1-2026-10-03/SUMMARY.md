@@ -13,8 +13,8 @@ delta > +0.005 with all seeds positive (the summary's own rule).
 | `replay_context_only` | 0.710849 | 0.000304 | −0.044731 | no (0/3) | below control |
 | `prol_prompt_proxy` | 0.519224 | 0.002998 | −0.236356 | no (0/3) | below control (beats its own off-arm) |
 | `prol_prompt_mechanism_off` | 0.494560 | 0.004799 | −0.261020 | no (0/3) | below control |
-| `randumb_random_features` | 0.238608 | 0.000708 | −0.516972 | no (0/3) | ceiling binds far below trained arms |
-| `ranpac_random_projection` | 0.231723 | 0.000745 | −0.523857 | no (0/3) | ceiling binds far below trained arms |
+| `randumb_random_features` | 0.238608 | 0.000708 | −0.516972 | no (0/3) | measured proxy below trained arms |
+| `ranpac_random_projection` | 0.231723 | 0.000745 | −0.523857 | no (0/3) | measured proxy below trained arms |
 
 Per-seed means (in seed order 0, 1, 2):
 
@@ -29,8 +29,8 @@ Per-seed means (in seed order 0, 1, 2):
 
 ## Honest reading
 
-1. **The replay half of the replay paper's mechanism transfers; the in-context
-   half does not.** Prior-example replay gradients alone (`replay_gradient_only`)
+1. **The implemented replay-gradient proxy wins this comparison; the
+   implemented in-context proxy does not.** Prior-example replay gradients alone (`replay_gradient_only`)
    beat the charged AdamW control by +0.0345 with every seed positive, clearing
    the lane's +0.005 candidate bar. The bounded label-attention context proxy
    alone (`replay_context_only`) *hurts* by −0.0447 in every seed, and adding it
@@ -38,13 +38,11 @@ Per-seed means (in seed order 0, 1, 2):
    −0.0060 below the control: the context term is a measured net negative at
    this scale, and it cancels most of the replay-gradient gain it is supposed to
    complement.
-2. **The frozen-feature ceilings bind exactly as ceilings should.** Random
-   Fourier features (RanDumb-style) and a random ReLU projection with recursive
-   ridge (RanPAC-style) over raw pixels sit ~52 points below the trained
-   backbone, with tiny across-seed spread. These are compatibility-ballast
-   proxies (see the lane's `protocol_gaps`), so this retains the expected
-   ordering rather than a paper comparison; it does bound what a frozen
-   random-extractor arm could claim here.
+2. **The tested frozen-feature proxies trail the trained arms.** Random
+   Fourier features and a random ReLU projection with recursive ridge score
+   about 52 percentage points below the trained control. These measurements
+   apply to the two fixed configurations; they are not upper bounds on
+   frozen features, pretrained representations, or the named papers.
 3. **The PROL prompt proxy beats only its own mechanism-off arm** (+0.0247,
    0.5192 vs 0.4946) and remains ~23 points below the trained control. The
    prompt/affine machinery adds something over its charged off-arm, but nowhere

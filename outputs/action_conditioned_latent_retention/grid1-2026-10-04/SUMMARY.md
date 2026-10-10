@@ -46,7 +46,7 @@ are permanently retained — not per-arm verdicts.
 2. **The two simpler model arms beat the no-model control at all four seeds on
    the late window** (+8.50 and +6.50 mean paired Δ for no-interactions and
    action-masked). This is a screening-level signal only: four frozen
-   development seeds, a 96-step late window inside a 256-step horizon, and
+   development seeds, a 32-step late window inside a 256-step horizon, and
    mixed-sign whole-stream deltas (+1.25 and +1.75 means) in the same
    direction-families. It justifies further bounded development of the simpler
    arms; it is not a supported claim, and the frozen roster cannot be extended

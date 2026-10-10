@@ -4,8 +4,7 @@
 Re-validates every retained shard byte-for-byte through the lane's own strict
 receipt machinery, rebuilds and validates one nonpromoting development receipt
 per (arm, seed), validates one matched four-arm panel per seed, computes the
-declared paired decision rule against the mechanism-off arm, and writes
-``analysis_summary.json``.
+declared paired decision rule against the mechanism-off arm, and compares the retained receipts and ``analysis_summary.json`` without writing.
 
 Usage (from the repository root, project venv)::
 
@@ -44,6 +43,7 @@ from alberta_framework.benchmarks.ipmnist_screening import (  # noqa: E402
     IPMNISTConfig,
     ScreeningRunResult,
     screening_spec,
+    load_shard,
 )
 from alberta_framework.evaluation.noise_curvature_ipmnist_nonpromoting import (  # noqa: E402
     validate_matched_noise_curvature_results,
@@ -86,7 +86,13 @@ def main() -> int:
     for arm in ARMS:
         for seed in SEEDS:
             path = SHARDS / f"shard-{arm}-seed{seed}.json"
-            shards[(arm, seed)] = json.loads(path.read_bytes())
+            shards[(arm, seed)] = load_shard(path)
+
+    reference = shards[(CONTROL, SEEDS[0])]
+    for shard in shards.values():
+        for field in ("source_provenance", "dataset_provenance", "environment", "config"):
+            if shard[field] != reference[field]:
+                raise ValueError(f"unmatched historical shard binding: {field}")
 
     # Rebuild each shard into a ScreeningRunResult and a strict receipt.
     receipts: dict[tuple[str, int], dict] = {}
@@ -111,10 +117,7 @@ def main() -> int:
             base_learner=shard["base_learner"],
             hyperparameters=dict(shard["hyperparameters"]),
             seed=shard["seed"],
-            config=IPMNISTConfig(
-                n_tasks=shard["config"]["n_tasks"],
-                task_length=shard["config"]["task_length"],
-            ),
+            config=IPMNISTConfig(**shard["config"]),
             per_task_accuracy=np.asarray(shard["per_task_accuracy"], dtype=np.float64),
             per_task_loss=np.asarray(shard["per_task_loss"], dtype=np.float64),
             per_task_plasticity=np.asarray(shard["per_task_plasticity"], dtype=np.float64),
@@ -150,11 +153,10 @@ def main() -> int:
             and g["per_task_plasticity"] == c["per_task_plasticity"]
         )
 
-    RECEIPTS.mkdir(exist_ok=True)
     for (arm, seed), payload in sorted(receipts.items()):
-        (RECEIPTS / f"receipt-{arm}-seed{seed}.json").write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n"
-        )
+        retained = json.loads((RECEIPTS / f"receipt-{arm}-seed{seed}.json").read_text())
+        if retained != payload:
+            raise ValueError(f"retained receipt differs from shard derivation: {arm}/{seed}")
 
     summary = {
         "grid": "grid1-2026-10-05",
@@ -186,9 +188,8 @@ def main() -> int:
         "development_only": True,
         "scientific_promotion_allowed": False,
     }
-    (GRID / "analysis_summary.json").write_text(
-        json.dumps(summary, indent=2, sort_keys=True) + "\n"
-    )
+    if json.loads((GRID / "analysis_summary.json").read_text()) != summary:
+        raise ValueError("retained summary differs from recomputed summary")
 
     print(f"PASS: {len(receipts)} receipts validated, 5 matched panels validated")
     for arm in ARMS:

@@ -44,8 +44,8 @@ parentheses, mean over tasks and seeds):
 All five arms sit at 0.031–0.0625 mean accuracy — pure plumbing scale. It is
 retained because the qualification doc's canonical command runs exactly this
 profile, not because it can order arms. `normalization_only`/`nap` already
-show the slightly higher effective rank (2.886 vs 2.651) they show at
-development scale.
+show higher effective rank (2.886 vs 2.651) at smoke scale; the direction
+reverses at development scale, as the table above shows.
 
 ## Honest reading (development-only, nonpromoting)
 
@@ -56,11 +56,11 @@ development scale.
   projection mechanism adds accuracy at this scale.
 - **`projection_only` changed no seed's mean accuracy at all** (+0.000000
   every seed) — its final-state and effective-rank digests do differ slightly
-  from the control's, so the trajectory moves, but not enough to move any
-  64-example task's predictions. This is a valid (near-)tie and is retained on
+  from the control's, so the trajectory moves, with some per-task accuracies differing by one example in opposite
+  directions. Equal whole-stream means do not establish equal predictions. This is a valid (near-)tie and is retained on
   purpose.
 - **The gain is not free in representation terms.** Both normalization arms
-  show *lower* final effective rank (26.3 vs 28.8) and a *higher* dead-unit
+  show *lower* mean per-task effective rank (26.3 vs 28.8) and a *higher* dead-unit
   fraction (0.037 vs 0.021) than the control. If the lane's hidden-state
   health metrics are the point, normalization's accuracy gain at this scale
   comes with more concentrated hidden representations — worth knowing before

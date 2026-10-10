@@ -63,7 +63,7 @@ root:
 ```bash
 .venv/bin/python \
   outputs/action_conditioned_latent_retention/grid1-2026-10-04/validate_retention.py \
-  --output outputs/action_conditioned_latent_retention/grid1-2026-10-04/analysis_summary.json
+  --output /tmp/action-latent-reanalysis.json
 ```
 
 It runs the lane's own strict `validate_action_latent_payload` on every
@@ -72,7 +72,7 @@ mechanism-off action/reward transcript-hash identity required by the protocol
 doc, matched environment exposure and matched model-arm update/training
 budgets, and re-derives the paired deltas tabulated in `SUMMARY.md`. The
 committed `validation_pass.txt` is the recorded output of that pass (exit 0,
-20 of 20 checks PASS); `analysis_summary.json` is its machine-readable result.
+21 of 21 checks PASS); `analysis_summary.json` is its machine-readable result.
 
 ## Reproduction
 
@@ -82,3 +82,7 @@ committed `validation_pass.txt` is the recorded output of that pass (exit 0,
 3. `cmp` the new receipt against `receipts/receipt-run1.json`; expect bitwise
    identity on the same runtime family (x86_64 CPU, float32 JAX defaults).
 4. Re-run the validation pass; expect the recorded `validation_pass.txt` output.
+
+Current-source validation is expected to reject after source or runtime drift.
+Revalidation requires the recorded implementation and runtime; an inventory or
+metric recomputation on another runtime is not a substitute for that gate.

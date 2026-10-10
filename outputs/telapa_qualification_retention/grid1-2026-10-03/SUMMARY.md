@@ -22,10 +22,10 @@ setting).
 
 ## Honest reading (development-only, nonpromoting)
 
-- **The archive never beat the fixed snapshot in this grid.** Five of six
+- **The archive never beat the fixed snapshot in this grid.** Three of six
   settings have `fixed_snapshot`/`mechanism_off` strictly ahead of
-  `diverse_archive`; (32, 16) and (64, 16) are ties. Against `one_model` the
-  archive is ahead in four settings and tied in two. Under the lane's own
+  `diverse_archive`; (32, 8), (32, 16), and (64, 16) are ties. Against `one_model` the
+  archive is ahead in five settings and tied in one. Under the lane's own
   retention policy these are valid outcomes, ties and regressions included,
   and they are retained here rather than dropped.
 - **Scale caveat is the whole story.** The smoke caps at 64 steps / 16
@@ -41,7 +41,7 @@ setting).
 - **Resources are bounded and recorded per run** in each receipt
   (`environment_steps`, `observations_consumed`, `policy_updates`,
   `policy_queries`, `descriptor_model_queries`, `task_boundary_disclosures`,
-  `archive_persistent_bytes` at most 318 B, `active_policy_persistent_bytes`
+  `archive_persistent_bytes` at most 319 B, `active_policy_persistent_bytes`
   16 B). Six runs cost seconds of wall clock; timing stays telemetry-only.
 
 ## What would make the next retention informative

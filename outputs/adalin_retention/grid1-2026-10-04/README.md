@@ -145,7 +145,7 @@ if __name__ == "__main__":
 ```bash
 # from a clean worktree at f3d32c451ed1c1715e477ad56b782fc7ea89b206
 # assert the backend this environment record describes before any run:
-PYTHONPATH=<worktree> .venv/bin/python -c "import jax; assert jax.backends.backend == 'cpu'; print(jax.devices())"
+PYTHONPATH=<worktree> .venv/bin/python -c "import jax; assert jax.default_backend() == 'cpu'; print(jax.devices())"
 
 PYTHONPATH=<worktree> .venv/bin/python - <<'EOF'
 import numpy as np

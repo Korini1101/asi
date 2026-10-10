@@ -34,6 +34,10 @@ attestation"` in `artifact.json`).
 
 ## How to re-validate
 
+Use the recorded generating source and locked runtime. Current-source
+validation is expected to reject after source drift; this historical record
+is not a completed run of the newly merged implementation.
+
 ```bash
 .venv/bin/python -m alberta_framework.benchmarks.reference_life_scorecard \
   validate outputs/reference_life_scorecard_development/run1-2026-10-03/artifact.json

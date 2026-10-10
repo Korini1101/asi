@@ -35,7 +35,7 @@ and reinforcement-learning lanes of #1583 remain
 | Schedule | `bounded-development` = 8 tasks x 64 examples, width 64, lr 0.003, replacement rate 1e-4, maturity threshold 100 (immutable `PROFILES` registry) |
 
 Every receipt binds its own `source_sha256`, `dataset_sha256`, and
-`runtime_identity`; all sixteen receipts in this grid share one lane source
+`runtime_identity`; all eight receipts in this grid share one lane source
 digest and one dataset digest (the same dataset derivation as the NaP
 comparator grid), and each was produced by one fresh Linux process.
 
@@ -43,6 +43,10 @@ The `python -m` entry this grid ran through was itself broken on the base
 revision: the module had no `__main__` guard, so `python -m` exited 0 printing
 nothing. The commit retaining this grid adds the guard (mirroring
 `nap_ipmnist.py`) plus a subprocess test that fails on the silent no-op.
+
+These are historical v1 two-hidden-layer receipts. The subsequent v2
+three-hidden-layer topology correction changes the lane; these records are
+not measurements of that corrected implementation.
 
 ## Reproduction
 

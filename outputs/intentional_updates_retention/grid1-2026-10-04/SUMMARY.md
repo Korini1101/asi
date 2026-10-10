@@ -34,17 +34,12 @@ mechanism-off control. Development-only, permanently nonpromoting.
    is ahead by roughly the same margin at both scales). Within this bounded
    protocol, the supervised Eq.-5 step-size rule is strictly dominated by the
    fixed-step normalized SGD it reduces to.
-2. **The adaptive clip is provably inert at this scale.**
-   `intentional_updates_no_clip` is **bit-identical** to
-   `intentional_updates_ipmnist` in all 8 runs — `per_task_accuracy`,
-   `per_task_loss`, and `per_task_plasticity` are exactly equal, not close.
-   Mechanically: the cap is `clip_mult × RMS(EMA of loss²)` = 20 × running
-   loss RMS ≈ 46 at this scale, while the loss itself is ≈ 2.3, so
-   `min(loss, cap)` never binds. The registered arm pair therefore measures a
-   mechanism that is switched off by its own constants in this regime; any
-   future clip-relevant measurement needs a regime where the loss approaches
-   its own running RMS bound (e.g. much larger intended fractions or
-   step-size scales).
+2. **The retained clip ablation metrics are equal at serialization precision.**
+   `intentional_updates_no_clip` and `intentional_updates_ipmnist` have equal
+   recorded task accuracy, loss, and plasticity curves in all eight runs.
+   The shards round these metrics to eight decimal places and do not record
+   cap activations or final-state identity. They cannot prove bitwise learner
+   equivalence or that the cap never binds.
 3. **Diagonal normalization is the harmful half, not the helpful half.**
    Removing the RMSProp diagonal (`no_diag`) *gains* +0.0054 (A) / +0.0060
    (B) over the full mechanism in every seed. The diagonal direction is
@@ -52,9 +47,10 @@ mechanism-off control. Development-only, permanently nonpromoting.
 4. **Freezing features collapses accuracy but not plasticity.**
    `head_only` trails by ≈ 0.20 — the largest deficit — yet its plasticity
    metric (0.41) is *higher* than the control's (0.38). Plasticity here
-   tracks parameter movement, not retained accuracy; the two arms with the
-   biggest parameter movement (`ipmnist`/`no_clip`, 0.43) have the worst
-   online accuracy. The control wins by moving less and retaining more.
+   is the clipped one-step relative loss reduction, not parameter movement
+   or retention. The full and no-clip arms have the highest recorded
+   plasticity, while the head-only arm has the lowest online accuracy.
+   This grid does not measure retained knowledge directly.
 5. **What this cannot say.** Four seeds, one architecture (300×150), one
    step-size family (`fixed_step_size 0.01` with the paper's
    `intended_fraction 0.5`), bounded 8/20-task cells. It cannot order the

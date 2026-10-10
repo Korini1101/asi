@@ -103,3 +103,14 @@ neutral `inconclusive` outcome.
 
 The hillclimb gate against the separately-protocolled live RLS control and the
 200-task development confirmation are **not** measured or claimed by this grid.
+
+## Review clarification
+
+The retained validator now reads through `load_shard`, checks shared recorded
+source, dataset, runtime and configuration bindings, and compares reconstructed
+receipts and summary against the retained files without overwriting them.
+It checks historical internal consistency; it does not establish current-source
+execution or authenticate the recorded provenance. Equal recorded curves (the
+legacy summary calls them bitwise equal) are equality at serialized precision,
+not proof of bitwise learner-state equivalence. Reproduction must write to a
+new directory, never over these retained artifacts.

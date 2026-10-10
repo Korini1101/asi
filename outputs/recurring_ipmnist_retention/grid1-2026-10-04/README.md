@@ -402,16 +402,16 @@ Plain descriptive reading, at n=3, with no statistical claim:
 
 - Every arm, on every seed, reaches higher online accuracy during the A
   revisit than during the first A exposure (for example
-  `sigma0_shiftnorm_d099`: 0.8960 vs 0.7803) — relearning is faster than
-  first learning in this A/B/A structure.
+  `sigma0_shiftnorm_d099`: 0.8960 vs 0.7803) — this is descriptive and does not isolate recurrence-specific
+  savings from general training or transfer (B also improves over initial A).
 - Sentinel accuracy for the revisited A permutation drops sharply during the
   B phase in every arm (to 0.53–0.62 from 0.84–0.87) and recovers after the
   5,000-step revisit to 0.84–0.87 — at or slightly above each arm's own
   post-first-exposure level for the two conditioned arms.
-- Interference is roughly symmetric: B recall after the A revisit
-  (0.61–0.70) sits in the same band as A recall after B.
+- Both directions show interference. Mean B recall after the A revisit
+  is 0.61–0.70, versus 0.53–0.62 for A recall after B; symmetry is not established.
 - `upgd_w_control` seed 1 is the widest per-seed outlier
-  (A-after-phase-2 sentinel accuracy 0.4297 vs 0.6797/0.7305 on its sibling
+  (B-after-phase-2 sentinel accuracy 0.4297 vs 0.6797/0.7305 on its sibling
   seeds).
 
 The report schema's own `metric_definitions` (for example

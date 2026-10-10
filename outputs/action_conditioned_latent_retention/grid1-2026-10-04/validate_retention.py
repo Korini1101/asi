@@ -147,7 +147,8 @@ def main() -> int:
         "failures": FAILURES,
         "verdict": "all checks passed" if not FAILURES else f"{len(FAILURES)} checks failed",
     }
-    args.output.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+    with args.output.open("x") as handle:
+        handle.write(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     print(f"WROTE {args.output}")
     return 0 if not FAILURES else 1
 
