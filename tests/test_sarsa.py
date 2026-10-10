@@ -1258,6 +1258,14 @@ class TestSARSALambdaTraces:
             result.state.learner_state.head_params.biases[0], [0.05], rtol=1e-6
         )
 
+        # The bounder's diagnostic scale must not attenuate eligibility.
+        np.testing.assert_allclose(
+            result.state.learner_state.head_traces[0][0], [[0.72, 0.0]], rtol=1e-6
+        )
+        np.testing.assert_allclose(
+            result.state.learner_state.head_traces[0][1], [0.72], rtol=1e-6
+        )
+
     def test_nonfinite_delayed_credit_rolls_back_complete_update(self):
         """A failing inactive-head update cannot commit the active head or clock."""
         agent = _make_agent(

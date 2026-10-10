@@ -886,10 +886,9 @@ class SARSAAgent:
         step_error = _gradient_step_error(optimizer, error)
         bounder = learner._bounder
         if bounder is not None:
-            (w_step, b_step), scale = bounder.bound(
+            (w_step, b_step), _scale = bounder.bound(
                 (w_step, b_step), step_error, (weights, biases)
             )
-            w_trace, b_trace = scale * w_trace, scale * b_trace
         return (
             weights + step_error * w_step,
             biases + step_error * b_step,
