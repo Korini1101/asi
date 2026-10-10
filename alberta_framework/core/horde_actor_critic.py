@@ -68,10 +68,52 @@ from alberta_framework.core.update_safety import (
 )
 
 _INT32_MAX = 2**31 - 1
+_FLOAT32_MIN = float(np.finfo(np.float32).min)
 _ACTUAL_INT_TYPES = frozenset({int, *(np.dtype(code).type for code in "bBhHiIlLqQpP")})
 _ACTUAL_FLOAT_TYPES = frozenset(
     {float, *(np.dtype(code).type for code in ("e", "f", "d", "g"))}
 )
+
+
+def _temperature_scaled_logits(logits: Array, temperature: float) -> Array:
+    """Scale logits for softmax without exposing a rounded argmax to fusion.
+
+    XLA may recompute ``logits * (1 / temperature)`` inside both fused
+    subcomputations of a compiled ``jax.nn.softmax``/``jax.nn.log_softmax``.
+    The contracted multiply-then-subtract leaves a rounding residual at the
+    argmax instead of an exact zero; once ``|logits / temperature|`` is large
+    enough that residual drives the exponential to ``inf`` or ``0`` and a
+    finite input yields a NaN policy, a silently rejected update, or a dropped
+    gradient (SlopDotCash/asi#2886).
+
+    Both shifts below are exact (softmax and log-softmax are shift invariant),
+    and each blocks one of the two recomputations.  When the temperature
+    exceeds one, halving both operands first is equally exact and keeps the
+    pre-scale centering finite for opposite finite extreme logits whose
+    pairwise distance exceeds the float32 maximum — inputs where the plain
+    ``logits / temperature`` expression stays finite and must stay finite.
+
+    For temperatures at or below one, that centering subtraction and the
+    division itself can still overflow: float32 cannot represent the pairwise
+    distance of ``[3e38, -3e38]``, so the shifted quotient reaches ``-inf``
+    and downstream ``probability * log_probability`` entropy products evaluate
+    ``0 * -inf`` as NaN.  The negative tail is therefore clamped to the finite
+    floating-point minimum, which is exact for every reported quantity:
+    ``exp(floor)`` underflows to zero exactly like ``exp(-inf)``, so softmax
+    results, derived probabilities, and the normalization sum are unchanged,
+    while log-probabilities stay finite and gradients remain finite.
+    """
+    if temperature > 1.0:
+        # Halving both operands is exact and prevents centering opposite finite
+        # extremes from overflowing before a large temperature brings them in range.
+        logits = logits * 0.5
+        temperature *= 0.5
+    # Both shifts preserve softmax/log-softmax while keeping division in range.
+    centered = logits - jax.lax.stop_gradient(jnp.max(logits))
+    scaled = centered / temperature
+    shifted = scaled - jax.lax.stop_gradient(jnp.max(scaled))
+    # NaN propagates through maximum, so genuine NaN inputs still surface.
+    return jnp.maximum(shifted, _FLOAT32_MIN)
 
 
 def _require_int32(name: str, value: object, *, minimum: int, maximum: int = _INT32_MAX) -> int:
@@ -625,7 +667,9 @@ class QHordeActorCriticAgent:
     ) -> Float[Array, " n_actions"]:
         """Compute softmax action probabilities for one observation."""
         logits = state.actor_weights @ observation + state.actor_bias
-        return jax.nn.softmax(logits / self._config.temperature)
+        return jax.nn.softmax(
+            _temperature_scaled_logits(logits, self._config.temperature)
+        )
 
     @functools.partial(jax.jit, static_argnums=(0,))
     def q_values(self, state: QHordeActorCriticState, observation: Array) -> Array:
@@ -921,7 +965,9 @@ class HordeActorCriticAgent:
     ) -> Float[Array, " n_actions"]:
         """Compute softmax action probabilities for one observation."""
         logits = state.actor_weights @ observation + state.actor_bias
-        return jax.nn.softmax(logits / self._config.temperature)
+        return jax.nn.softmax(
+            _temperature_scaled_logits(logits, self._config.temperature)
+        )
 
     @functools.partial(jax.jit, static_argnums=(0,))
     def values(self, state: HordeActorCriticState, observation: Array) -> Array:
@@ -1303,7 +1349,9 @@ def _nlhac_log_prob(
     )
     logits = head_w @ hidden + head_b
     # Keep the score in log space so finite extreme logits retain finite gradients.
-    log_probs = jax.nn.log_softmax(logits / temperature)
+    log_probs = jax.nn.log_softmax(
+        _temperature_scaled_logits(logits, temperature)
+    )
     epsilon = jnp.asarray(actor_epsilon, dtype=log_probs.dtype)
     uniform_log_prob = jnp.log(epsilon) - jnp.log(
         jnp.asarray(log_probs.shape[0], dtype=log_probs.dtype)
@@ -1336,7 +1384,7 @@ def _nlqhac_expected_advantage_objective(
         trunk_weights, trunk_biases, obs, leaky_relu_slope, use_layer_norm
     )
     logits = head_w @ hidden + head_b
-    probs = jax.nn.softmax(logits / temperature)
+    probs = jax.nn.softmax(_temperature_scaled_logits(logits, temperature))
     return jnp.dot(probs, advantages)
 
 
@@ -1752,7 +1800,9 @@ class NonlinearHordeActorCriticAgent:
             cfg.use_layer_norm,
         )
         logits = state.actor_head_w @ hidden + state.actor_head_b
-        probs = jax.nn.softmax(logits / cfg.temperature)
+        probs = jax.nn.softmax(
+            _temperature_scaled_logits(logits, cfg.temperature)
+        )
         return (1.0 - cfg.actor_epsilon) * probs + cfg.actor_epsilon / cfg.n_actions
 
     @functools.partial(jax.jit, static_argnums=(0,))
@@ -2461,7 +2511,9 @@ class NonlinearQHordeActorCriticAgent:
             cfg.use_layer_norm,
         )
         logits = state.actor_head_w @ hidden + state.actor_head_b
-        return jax.nn.softmax(logits / cfg.temperature)
+        return jax.nn.softmax(
+            _temperature_scaled_logits(logits, cfg.temperature)
+        )
 
     @functools.partial(jax.jit, static_argnums=(0,))
     def q_values(self, state: NonlinearHordeActorCriticState, observation: Array) -> Array:
