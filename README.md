@@ -145,6 +145,10 @@ machinery is L0 and permanently nonpromoting: implementation, a valid plan, or p
 does not select `reference-dev`, attest execution, or constitute a completed run, performance
 result, or scientific evidence.
 
+The [completed hosted scorecard](outputs/reference_life_scorecard_development/run2-2026-10-09/README.md)
+retains all 144 lives and an independently recomputed aggregate. Its frozen result is
+`valid_baseline_failure`: RiverSwim controls do not qualify, so no candidate is selected.
+
 The package also contains inherited surfaces related to all twelve steps of the Alberta Plan.
 That crosswalk is useful for finding gaps, but completing a checklist of Plan mechanisms would
 not by itself establish the ASI north star.
@@ -432,6 +436,7 @@ consumed seeds, or modify immutable `outputs/` records. See
 ### Mission and strategy
 
 - [ASI research roadmap and whole-life scorecard](docs/research/asi-roadmap.md)
+- [October 2026 issue review and dispositions](docs/research/issue-review-2026-10.md)
 - [Proposed ASI reference-agent protocol](docs/design/asi-reference-agent-protocol.md)
 
 ### Status and evidence

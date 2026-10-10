@@ -35,8 +35,14 @@ consumer, causal question, live matched baseline and bounded resource plan.
 | [#1582](https://github.com/SlopDotCash/asi/issues/1582) | completed | Rebuilt the locked COOM/ViZDoom image and retained two matching real-engine CO8 fixed-action traces, strict in-image validation, source/assets and resource bounds. This closes runtime qualification, not a SAC learning comparison. |
 | [#1583](https://github.com/SlopDotCash/asi/issues/1583) | not planned | Retain four useful current-schema three-layer fixed-label MNIST diagnostic records, typed per-layer resources and exact SGD/mechanism-off reduction. These do not satisfy the issue’s explicitly requested random-label protocol. Retire the broader random-label/ImageNet/RL reproduction program because it has no present integrated decision consumer or demonstrated bottleneck; do not report it completed. |
 
+| [#1585](https://github.com/SlopDotCash/asi/issues/1585) | completed | Executed all 144 source-bound fresh-process shards and independently verified the complete hosted aggregate, every receipt file and all 1,728,000 accepted events. Zero execution/parameter-change failures; the frozen decision is `valid_baseline_failure` because RiverSwim controls do not qualify. No selection or promotion. |
+
 New COOM, native-suite, corrected three-layer plasticity and corrected-clock CPR
 results are retained under `outputs/coom_runtime_qualification/`,
 `outputs/native_and_plasticity_qualification/`, and `outputs/cpr_corrected_clock/`.
-The 144-shard reference-life run is still in progress; no aggregate outcome is
-asserted before its complete validation.
+The [full hosted reference-life result](../../outputs/reference_life_scorecard_development/run2-2026-10-09/README.md)
+is independently validated and retained: all 144 lives completed, but the frozen
+result is `valid_baseline_failure`. No candidate is selected or promoted.
+
+This review resolves 23 issues: 11 completed scoped deliverables and 12 retired
+as not planned. Retired research programs are not reported as completed.

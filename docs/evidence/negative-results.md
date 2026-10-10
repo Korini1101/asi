@@ -484,3 +484,23 @@ and excluded source-drift attempt are retained in
 [`cpr_corrected_clock/2026-10-09-stable/`](../../outputs/cpr_corrected_clock/2026-10-09-stable/README.md).
 Any new experiment needs a different causal hypothesis and retains those
 stronger controls; no reference configuration or scientific claim is promoted.
+
+
+## Reference-life hosted scorecard: valid baseline failure (2026-10-09)
+
+The [current-source hosted run](../../outputs/reference_life_scorecard_development/run2-2026-10-09/README.md)
+completed all 144 lives and 1,728,000 accepted events with zero execution or
+parameter-change violations. All original receipt inventory entries and the
+complete aggregate were independently verified; recomputation from the original
+shards is exact. The frozen result is `valid_baseline_failure`, not an execution
+failure: RiverSwim discounted-SARSA and differential-SARSA normalized paired lower
+bounds (0.0805083 and 0.00170768) do not exceed 0.1, leaving no qualifying control
+there. Candidate selection is not evaluated. SwitchingTwoState controls qualify,
+but Prototype fails noninferiority to differential SARSA; RiverSwim Prototype also
+misses the predefined improvement-over-frozen gate. These inspected development
+outcomes do not support promotion or a scientific claim.
+
+Next work requires a separate bounded control-calibration/bottleneck hypothesis
+and its own plan. Do not relax or retrospectively retune this run’s gates. Timing
+remains telemetry, resource Pareto selection remains unevaluated, and the prior
+run and all pinned evidence are unchanged.

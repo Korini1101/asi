@@ -24,12 +24,18 @@ not casually rename them. The robot track imports the continual-RL subset
 in-process; keep `requires-python >= 3.12`, the `numpy >= 1.26` floor, and the
 existing import surface intact.
 
-**Current program hillclimb:** run a permanently nonpromoting matched
+**Current program hillclimb:** use the completed permanently nonpromoting matched
 development scorecard across `SwitchingTwoStateMDP` and `RiverSwimMDP` with
 frozen/no-learning, random, finite-horizon privileged dynamic-programming, and
 strong SARSA-family controls plus explicit resource accounting. This is
 development selection only; it does not populate `reference-dev` or create
 performance or scientific evidence.
+The current hosted result and independent validation are retained in
+`outputs/reference_life_scorecard_development/run2-2026-10-09/`. Its frozen
+decision is `valid_baseline_failure`: RiverSwim controls do not qualify, so
+no candidate is selected. Investigate control calibration and candidate/control
+bottlenecks under a separately declared bounded development plan; do not relax
+this completed run’s gates.
 
 The scorecard implementation is in
 `alberta_framework/{reference_life_controls.py,benchmarks/reference_life_scorecard.py}`
@@ -43,7 +49,7 @@ All agent RNG roots use explicit Threefry keys. Records enforce the fixed reward
 lattice, complete counters, canonical initial/final numeric payload accounting
 (including static oracle policy bytes), and permanently nonpromoting policy.
 Timing remains telemetry-only until a separately qualified timing protocol
-exists. The implementation and validators do not constitute a completed run or
+exists. The implementation and validators alone do not constitute a completed run or
 performance result; consistency hashes are not authenticated execution proof.
 
 The unfrozen `preview1` transaction protocol, pure reducer/CAS ledger,
