@@ -420,3 +420,54 @@ postmortem.
    not only an input-shift fix; perturbation again added no benefit once
    conditioning was present. Record: `results.v2.json` in the EMNIST output
    lane.
+
+
+16. **The supervised Intentional Updates extension loses to its mechanism-off
+    control at the 60-task IPMNIST horizon.** Across five fresh development
+    seeds, full Intentional Updates measured `0.760557 ± 0.000882` mean online
+    accuracy (mean ± sample standard deviation), versus
+    `0.791919 ± 0.001805` for the exact fixed-step reduction. The paired delta
+    was `-0.031362 ± 0.001296`, with all five seeds negative, decisively failing
+    the frozen `> +0.005` all-seeds-positive gate. No-diagonal remained
+    negative by `-0.023564`; no-clipping matched the full arm's loss; head-only
+    regressed by `-0.159731`. This rejects the registered supervised extension
+    at its frozen hyperparameters and horizon, not the publication's RL method.
+    Do not retry this configuration without a causal hypothesis that addresses
+    the gap to fixed normalized SGD. Record:
+    [`intentional_updates_r1/`](../../outputs/ipmnist_screening/intentional_updates_r1/).
+    The [attempt reconciliation](../../outputs/ipmnist_screening/intentional_updates_r1/REVIEW_RECONCILIATION.md)
+    binds the retained preflight failures to their later completed shards.
+
+
+
+17. **The registered bounded-growth and bounded-elastic IPMNIST adaptations do not beat
+    fixed-capacity CBP.** Across five fresh paired development seeds, fixed CBP measured mean
+    online accuracy `0.751540`. Bounded growth measured `0.728955` (paired delta `-0.022585`),
+    and bounded elastic measured `0.728820` (paired delta `-0.022720`); all ten candidate-control
+    deltas were negative. Both candidates met the shared peak persistent-memory budget, and the
+    elastic arm ended at half the first-layer width, but neither passed the preregistered accuracy
+    sign rule. This permanently nonpromoting result rejects only the registered fixed-shape
+    eight-task adaptation, not the paper's dynamically deep method. Do not rerun the consumed
+    roster. Record:
+    [`bounded_elastic_matched_development/`](../../outputs/bounded_elastic_matched_development/).
+
+
+
+## Intentional TD linear control
+
+The preregistered four-seed, five-arm development comparison at `e540cc8e`
+did not establish the proposed benefit. Full Intentional value updates in a
+linear SARSA consumer averaged **0.548425** reward per transition against
+**0.715525** for fixed-step SARSA with traces on SwitchingTwoState. On
+three-state RiverSwim the corresponding means were **0.243633** and
+**0.541589**, with large seed spread. All 40 runs completed, totaling 400,000
+transitions and updates. The full arm failed the frozen comparison rule;
+neither it nor a post-hoc-selected ablation is promoted.
+
+This closes only the tested configuration as a development win candidate. It
+does not refute the published method, its deep-RL implementation, or ASI's
+supervised extension. Do not repeat this configuration without a new causal
+hypothesis and separately recorded plan. Full parameters, sample standard
+deviations, paired deltas, source hashes, resource-accounting exclusions, and
+raw run logs are retained in the
+[development report](../../outputs/intentional_td_development_v1/REPORT.md).
