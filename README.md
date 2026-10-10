@@ -251,6 +251,14 @@ The console scripts are grouped by responsibility; every command supports `--hel
 | `asi-ipmnist-ceiling` | Produce new, atomic no-replace stationary/carried/full or batch ceiling diagnostics |
 | `asi-ipmnist-campaign` | Recompute paired frontiers or ceiling summaries from explicit input directories |
 | `asi-rule-discovery-summary` | Rebuild the nonpromoting rule-discovery comparison from explicit inputs |
+| `asi-action-conditioned-latent` | Run the bounded, permanently nonpromoting action-conditioned latent-control lane |
+| `asi-jepa-transfer-feasibility` | Assess frozen-encoder transfer feasibility for live control; permanently nonpromoting |
+| `asi-l2er-matched-development` | Run the bounded, permanently nonpromoting L2-ER development comparison |
+| `asi-bimu-matched-development` | Inspect the bounded BiMU comparison; execution remains gated on separate authorization |
+| `asi-nap-ipmnist` | Run the bounded, permanently nonpromoting Normalize-and-Project IPMNIST comparator |
+| `asi-activation-feature-ipmnist` | Run the permanently nonpromoting activation/feature IPMNIST screening lane |
+| `asi-activation-feature-campaign` | Inspect or aggregate the permanently nonpromoting activation/feature campaign; execution remains gated |
+| `asi-new-directions-audit` | Audit historical V5/V6 development records without rewriting their source artifacts |
 | `alberta-evidence-status` | Validate the complete five-claim evidence registry |
 | `alberta-recurring-feature-evidence`, `alberta-scale-robust-evidence`, `alberta-ftl-evidence`, `alberta-multiagent-evidence`, `alberta-ia-evidence` | Validate or build one claim's versioned artifact under its strict protocol |
 | `alberta-forager-benchmark`, `alberta-historical-forager` | Run development Forager comparisons or inspect reconstructed historical families |
