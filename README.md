@@ -196,6 +196,16 @@ environment for every command:
 .venv/bin/python -m pip install -e '.[dev]'
 ```
 
+### Windows (PowerShell)
+
+These instructions cover the CPU development setup with the `.[dev]` extra, which the Windows CI lane tests. The `.[gpu]` extra installs JAX with CUDA; JAX does not support NVIDIA GPU use on native Windows, and its WSL2 GPU support is experimental. The `.[forager]` extra is not covered by the Windows CI lane.
+
+Create a virtual environment with `py -3.12 -m venv .venv`. For later Python commands in this README that start with `.venv/bin/python`, use `.\.venv\Scripts\python.exe` instead. For example:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e '.[dev]'
+```
+
 ## Quick start
 
 This small example runs one online-learning primitive on a drifting synthetic stream. It is
