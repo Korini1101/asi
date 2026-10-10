@@ -8,17 +8,22 @@ GQ(lambda), Maei & Sutton 2010), the rho=1 equivalence with the on-policy
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from functools import lru_cache
+
 import chex
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from alberta_framework.core.horde import HordeLearner
+from alberta_framework.core.multi_head_learner import MultiHeadMLPState
 from alberta_framework.core.off_policy_horde import (
     NonlinearSharedGTDHordeLearner,
     OffPolicyHordeLearner,
 )
-from alberta_framework.core.optimizers import LMS
+from alberta_framework.core.optimizers import LMS, AGCBounding, Bounder, ObGDBounding
 from alberta_framework.core.types import DemonType, GVFSpec, HordeSpec, create_horde_spec
 
 
@@ -116,18 +121,22 @@ def test_two_step_canonical_per_decision_is_update() -> None:
     )
 
 
-def test_rho_one_matches_on_policy_horde_learner() -> None:
-    """With rho=1 everywhere, updates must equal the on-policy HordeLearner."""
+def _run_rho_one_pair(
+    bounder: Bounder | None,
+) -> tuple[MultiHeadMLPState, MultiHeadMLPState]:
+    """Run the rho=1 equivalence scenario and return both learners' states."""
     spec = _spec(gammas=(0.0, 0.7), lamdas=(0.0, 0.6))
     off = OffPolicyHordeLearner(
         spec,
         hidden_sizes=(8,),
         optimizer=LMS(step_size=0.05),
+        bounder=bounder,
     )
     on = HordeLearner(
         spec,
         hidden_sizes=(8,),
         optimizer=LMS(step_size=0.05),
+        bounder=bounder,
     )
     off_state = off.init(3, jax.random.key(11))
     on_state = on.init(3, jax.random.key(11))
@@ -143,6 +152,88 @@ def test_rho_one_matches_on_policy_horde_learner() -> None:
             cums = cums.at[1].set(jnp.nan)  # inactive demon step
         off_state = off.update_with_ratios(off_state, obs, cums, next_obs, ones).state
         on_state = on.update(on_state, obs, cums, next_obs).state
+    return off_state, on_state
+
+
+@lru_cache(maxsize=1)
+def _unbounded_pair() -> tuple[MultiHeadMLPState, MultiHeadMLPState]:
+    """The bounder-free reference pair, computed once per process."""
+    return _run_rho_one_pair(None)
+
+
+def _tree_max_abs_diff(
+    left: MultiHeadMLPState, right: MultiHeadMLPState
+) -> float:
+    """Largest absolute difference over every stored leaf of two states.
+
+    Covers trunk weights, biases, head weights, biases, and both trace
+    groups, so a perturbation landing in any single parameter group is
+    still measured.
+    """
+    left_leaves = jax.tree_util.tree_leaves(left)
+    right_leaves = jax.tree_util.tree_leaves(right)
+    assert len(left_leaves) == len(right_leaves)
+    return max(
+        float(
+            np.max(
+                np.abs(
+                    np.asarray(a, dtype=np.float64) - np.asarray(b, dtype=np.float64)
+                )
+            )
+        )
+        for a, b in zip(left_leaves, right_leaves)
+    )
+
+
+@pytest.mark.parametrize(
+    "make_bounder",
+    [
+        pytest.param(lambda: None, id="none"),
+        pytest.param(lambda: ObGDBounding(kappa=2.0), id="obgd-bound-active"),
+        pytest.param(lambda: AGCBounding(clip_factor=0.01), id="agc-clipping"),
+    ],
+)
+def test_rho_one_matches_on_policy_horde_learner(
+    make_bounder: Callable[[], Bounder | None],
+) -> None:
+    """With rho=1 everywhere, updates must equal the on-policy HordeLearner.
+
+    The equivalence is a property of the learners, not of the update
+    bounder, so it is pinned under an active ``ObGDBounding`` and an
+    actively clipping ``AGCBounding`` as well as without a bounder.
+
+    What this pin establishes: if either learner stops treating the two
+    paths identically *for the scenario exercised here* (same spec, same
+    seeds, one inactive-demon step, six updates), one of the four tree
+    assertions fails.  The bounder cases exist so the property is checked
+    while the bounder actually perturbs the trajectory, which the two
+    engagement guards establish symmetrically: with a bounder configured,
+    both the off-policy and the on-policy final state must differ from
+    their bounder-free counterparts over every stored leaf.  The guards
+    run first, so an inert bounder fails with an explicit "never engaged"
+    message instead of an opaque tree mismatch.  Mutation evidence that
+    the four assertions can fail for exactly this reason is recorded in
+    the PR description: folding the bounder's reported metric into one
+    learner's stored traces turns the bounder cases red while ``none``
+    stays green.
+    """
+    bounder = make_bounder()
+    off_state, on_state = _run_rho_one_pair(bounder)
+
+    if bounder is not None:
+        # The bound must actually engage on BOTH learners, over every
+        # parameter group: with the bounder active each trajectory must
+        # differ from its bounder-free counterpart.  Guards against an
+        # inert bounder (vacuous copies of "none") and against a bounder
+        # wired into only one of the two learners.  Runs before the
+        # equivalence assertions so this failure names itself.
+        unbounded_off, unbounded_on = _unbounded_pair()
+        assert _tree_max_abs_diff(off_state, unbounded_off) > 1e-6, (
+            "the bounder never engaged the off-policy learner"
+        )
+        assert _tree_max_abs_diff(on_state, unbounded_on) > 1e-6, (
+            "the bounder never engaged the on-policy learner"
+        )
 
     chex.assert_trees_all_close(off_state.trunk_params, on_state.trunk_params, atol=1e-6)
     chex.assert_trees_all_close(off_state.head_params, on_state.head_params, atol=1e-6)
