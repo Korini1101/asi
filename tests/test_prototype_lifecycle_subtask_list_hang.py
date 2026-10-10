@@ -53,7 +53,12 @@ def test_from_config_rejects_million_index_list_before_walk() -> None:
     started = time.perf_counter()
     with pytest.raises(ValueError, match="collection limit"):
         PrototypeFeatureLifecycleConfig.from_config(_payload(indices=[0] * 5_000_000))
-    assert time.perf_counter() - started < 0.25
+    # Not a latency contract: gate removal is message-pinned — without the
+    # length gate the list fails downstream with a different error than the
+    # matched "collection limit". The ungated walk itself measures ~0.1 s,
+    # below observed CI contention jitter, so this budget is an anti-runaway
+    # guard only (same contention class as run 36962287499).
+    assert time.perf_counter() - started < 5.0
 
 
 def test_from_config_last_fit_pair_still_roundtrips() -> None:

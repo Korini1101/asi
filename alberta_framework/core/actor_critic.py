@@ -53,6 +53,35 @@ _ACTUAL_REAL_TYPES = _ACTUAL_INT_TYPES | frozenset(
 )
 
 
+def _temperature_scaled_logits(logits: Array, temperature: float) -> Array:
+    """Scale logits for softmax without exposing a rounded argmax to fusion.
+
+    XLA may recompute ``logits * (1 / temperature)`` inside both fused
+    subcomputations of a compiled ``jax.nn.softmax``/``jax.nn.log_softmax``.
+    The contracted multiply-then-subtract leaves a rounding residual at the
+    argmax instead of an exact zero; once ``|logits / temperature|`` is large
+    enough that residual drives the exponential to ``inf`` or ``0`` and a
+    finite input yields a NaN policy or a wrong sampled action
+    (SlopDotCash/asi#2886).
+
+    Both shifts below are exact (softmax and log-softmax are shift invariant),
+    and each blocks one of the two recomputations.  When the temperature
+    exceeds one, halving both operands first is equally exact and keeps the
+    pre-scale centering finite for opposite finite extreme logits whose
+    pairwise distance exceeds the float32 maximum — inputs where the plain
+    ``logits / temperature`` expression stays finite and must stay finite.
+    """
+    if temperature > 1.0:
+        # Halving both operands is exact and prevents centering opposite finite
+        # extremes from overflowing before a large temperature brings them in range.
+        logits = logits * 0.5
+        temperature *= 0.5
+    # Both shifts preserve softmax/log-softmax while keeping division in range.
+    centered = logits - jax.lax.stop_gradient(jnp.max(logits))
+    scaled = centered / temperature
+    return scaled - jax.lax.stop_gradient(jnp.max(scaled))
+
+
 def _require_int32(name: str, value: object, *, minimum: int, maximum: int = _INT32_MAX) -> int:
     if type(value) not in _ACTUAL_INT_TYPES:
         raise ValueError(f"{name} must be an integer in [{minimum}, {maximum}]")
@@ -662,7 +691,7 @@ class ActorCriticAgent:
         """Compute softmax action probabilities for one observation."""
         observation = self._observation(state, observation)
         logits = state.actor_weights @ observation + state.actor_bias
-        return jax.nn.softmax(logits / self._config.temperature)
+        return jax.nn.softmax(_temperature_scaled_logits(logits, self._config.temperature))
 
     @functools.partial(jax.jit, static_argnums=(0,))
     def value(self, state: ActorCriticState, observation: Array) -> Float[Array, ""]:
@@ -1581,14 +1610,17 @@ class ContinuousActorCriticAgent:
         bootstrap = jnp.where(discount == 0.0, jnp.zeros_like(next_value), discount * next_value)
         td_error = reward + bootstrap - value
 
-        sigma_sq = prev_sigma * prev_sigma + 1e-8
         diff = action - prev_mean
         # Gaussian score function (per-dimension):
         #   grad log pi w.r.t. mean   = diff / sigma^2
         #   grad log pi w.r.t. log_sigma = diff^2 / sigma^2 - 1
-        mean_grad_bias = diff / sigma_sq
+        # Standardize first: squaring sigma can underflow/overflow even when
+        # both scores are representable. A fixed variance floor would change
+        # the policy gradient and can reverse the log-sigma update's sign.
+        standardized_diff = diff / prev_sigma
+        mean_grad_bias = standardized_diff / prev_sigma
         mean_grad_weights = mean_grad_bias[:, None] * prev_obs[None, :]
-        log_sigma_grad = (diff * diff) / sigma_sq - 1.0
+        log_sigma_grad = standardized_diff * standardized_diff - 1.0
 
         actor_decay = discount * cfg.actor_lamda
         critic_decay = discount * cfg.critic_lamda

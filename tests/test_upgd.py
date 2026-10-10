@@ -1477,6 +1477,66 @@ class TestUpdateMetrics:
 # =============================================================================
 
 
+class TestObGDBoundCountsTheErrorOnce:
+    """UPGD's steps already carry the prediction error; the bound must not re-apply it.
+
+    Published ObGD (Elsayed et al. 2024) bounds with ``kappa * max(|delta|, 1)``
+    times the L1 norm of the error-free gradient. Because UPGD forms
+    ``step = -alpha * dL/dw = alpha * delta * z`` before bounding, feeding both
+    the steps and ``|delta|`` to the bound multiplies the error twice.
+    """
+
+    @pytest.mark.parametrize("delta", [5.0, 2.0, 0.5, 0.1])
+    def test_linear_bounded_update_matches_published_obgd(self, delta: float) -> None:
+        kappa, lr = 2.0, 1.0
+        learner = UPGDLearner(
+            n_heads=1,
+            hidden_sizes=(),
+            step_size=lr,
+            sparsity=0.0,
+            perturbation_sigma=0.0,
+            bounder=ObGDBounding(kappa=kappa),
+            track_unit_utilities=False,
+            track_gradient_history=False,
+        )
+        state = learner.init(10, jr.key(0))
+        x = jnp.ones(10, dtype=jnp.float32)
+        z_l1 = float(jnp.sum(jnp.abs(x)) + 1.0)  # weight and bias gradient, error-free
+        z_sq = float(jnp.sum(x * x) + 1.0)
+        before = float(learner.predict(state, x)[0])
+        target = jnp.array([before + delta], dtype=jnp.float32)
+
+        after = float(learner.predict(learner.update(state, x, target).state, x)[0])
+
+        alpha_eff = lr / max(kappa * max(abs(delta), 1.0) * lr * z_l1, 1.0)
+        assert after - before == pytest.approx(alpha_eff * delta * z_sq, rel=1e-4)
+        # The bounded step never overshoots the target.
+        assert 0.0 < (after - before) / delta <= 1.0
+
+    @pytest.mark.parametrize("delta", [0.0, 0.1, 1.0, 3.0])
+    def test_kappa_bound_of_error_carrying_steps_equals_bounding_the_gradient(
+        self, delta: float
+    ) -> None:
+        from alberta_framework.core.optimizers import _apply_obgd_bound
+
+        kappa = 0.5
+        keys = jr.split(jr.key(3), 3)
+        gradient_steps = tuple(
+            jr.normal(k, shape=shape, dtype=jnp.float32)
+            for k, shape in zip(keys, [(4, 3), (4,), (2, 4)], strict=True)
+        )
+        error = jnp.array(delta, dtype=jnp.float32)
+        error_steps = tuple(error * g for g in gradient_steps)
+
+        bounded, _ = UPGDLearner._obgd_bound_with_kappa(
+            error_steps, error, jnp.array(kappa, dtype=jnp.float32)
+        )
+        published, _ = _apply_obgd_bound(gradient_steps, error, kappa)
+        chex.assert_trees_all_close(
+            bounded, tuple(error * b for b in published), rtol=1e-6, atol=1e-7
+        )
+
+
 class TestUtilityTracking:
     """Utility should reflect |w * grad| accumulation."""
 
@@ -1819,6 +1879,48 @@ class TestUtilityTracking:
         ]
         assert head_deltas[0] > 0.0
         assert sum(delta > 0.0 for delta in head_deltas[1:]) == 1
+
+    def test_margin_adapter_leaves_masked_heads_and_lone_active_head_untouched(self):
+        """NaN targets mask heads; the margin step needs an active competitor.
+
+        With every wrong logit masked to -inf the argmax fell back to head 0,
+        so an inactive head 0 was pushed down, and a lone active head 0 was
+        pushed up against itself on every step.
+        """
+        learner = UPGDLearner(
+            n_heads=3,
+            hidden_sizes=(4,),
+            sparsity=0.0,
+            step_size=0.0,
+            perturbation_sigma=0.0,
+            readout_margin=1.0,
+            readout_margin_step_size=0.1,
+        )
+        state = learner.init(feature_dim=3, key=jr.key(15))
+        features = jnp.array([1.0, -0.5, 0.25])
+        nan = float("nan")
+        for targets in (
+            jnp.array([1.0, nan, nan]),
+            jnp.array([nan, nan, 1.0]),
+            jnp.array([nan, 1.0, nan]),
+        ):
+            result = learner.update(state, features, targets)
+            chex.assert_trees_all_equal(result.state.head_params, state.head_params)
+
+        # Two active heads still receive the hinge push, and the masked head does not.
+        result = learner.update(state, features, jnp.array([1.0, 0.0, nan]))
+        assert bool(
+            jnp.any(result.state.head_params.biases[0] != state.head_params.biases[0])
+        )
+        assert bool(
+            jnp.any(result.state.head_params.biases[1] != state.head_params.biases[1])
+        )
+        chex.assert_trees_all_equal(
+            result.state.head_params.weights[2], state.head_params.weights[2]
+        )
+        chex.assert_trees_all_equal(
+            result.state.head_params.biases[2], state.head_params.biases[2]
+        )
 
     def test_gradient_alignment_meta_plasticity_changes_head_scales(self):
         learner = UPGDLearner(

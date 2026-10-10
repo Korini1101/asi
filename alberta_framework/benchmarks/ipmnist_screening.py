@@ -2548,6 +2548,24 @@ _DISCOVERED_LAYER_EXPONENT: dict[str, float] = {
 }
 
 
+def _nb_vote_log_probs(nb_ll: Array, scale: float) -> Array:
+    """Naive-Bayes ensemble vote log-probabilities, compiled-stable.
+
+    ``log_softmax(nb_ll / scale)`` with a non-power-of-two feature count is
+    the screening twin of issue 2886: XLA recomputes the inexact reciprocal
+    multiply inside both softmax fusions, so past ``|nb_ll / scale| ~ 2**31``
+    the compiled vote is all-``-inf`` while eager stays finite. The compiled
+    ``argmax`` is then 0 and ``metrics[0]`` (online accuracy) is silently
+    wrong. Subtracting a maximum on both sides of the scale blocks both
+    recomputations; log-softmax is shift-invariant, so both subtractions are
+    exact. ``stop_gradient`` keeps the maxima out of any differentiation
+    through the vote.
+    """
+    centered = nb_ll - jax.lax.stop_gradient(jnp.max(nb_ll))
+    scaled = centered / scale
+    return jax.nn.log_softmax(scaled - jax.lax.stop_gradient(jnp.max(scaled)))
+
+
 def _discovered_rule_hp(**overrides: float) -> dict[str, float]:
     """Discovered-rule hyperparameters: champion-form constants + inert flags."""
     merged = dict(_DISCOVERED_RULE_DEFAULTS)
@@ -2852,7 +2870,7 @@ def _make_discovered_rule_learner(
                     + (x_used[None, :] - state.nb_mean) ** 2 / nb_var_safe,
                     axis=1,
                 )
-                members.append(jax.nn.log_softmax(nb_ll / float(x_used.shape[0])))
+                members.append(_nb_vote_log_probs(nb_ll, float(x_used.shape[0])))
                 weights.append(state.member_acc[2])
             w_sum = sum(weights) + 1e-8
             combined = sum(w * s for w, s in zip(weights, members)) / w_sum
@@ -5083,7 +5101,7 @@ def _make_rls_head_learner(
             # horizon).  Rescale P to the trace cap whenever it exceeds it;
             # under the cap the step is bitwise untouched.
             new_p = new_p * jnp.minimum(1.0, trace_cap / jnp.trace(new_p))
-        err_after = y_onehot - new_wout.T @ phi
+        err_after = y_onehot - new_wout.T @ _phi(new_params, x_norm)
         loss_after = 0.5 * jnp.sum(err_after * err_after)
         plasticity = jnp.clip(
             1.0 - loss_after / jnp.maximum(loss, _PLASTICITY_LOSS_FLOOR), 0.0, 1.0
@@ -6707,6 +6725,9 @@ def _make_cpr_ipmnist_learner(
     parameter-keyed.  It retains the paper's layer/tensor mean normalization,
     Eq. 6 sigmoid shape (kappa=16), periodic pull, and reset-to-retained-init
     operator.  This protocol difference is bound in the result receipt.
+    Periodic modes use the pinned official pre-update clock: frequency F
+    first resets on update F+1, after F completed updates, then every F
+    updates.
     """
     mode_code = int(hp["mode_code"])
     if mode_code not in range(5):
@@ -6753,7 +6774,7 @@ def _make_cpr_ipmnist_learner(
         sgd_params = {
             name: params[name] - step_size * grads[name] for name in params
         }
-        at_reset = jnp.equal(jnp.mod(new_step, reset_frequency), 0)
+        at_reset = (state.step > 0) & jnp.equal(jnp.mod(state.step, reset_frequency), 0)
         new_params: dict[str, Array] = {}
         for name in params:
             mean_utility = jnp.mean(utility[name])

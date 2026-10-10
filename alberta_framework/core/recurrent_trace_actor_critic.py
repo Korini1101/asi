@@ -53,6 +53,7 @@ from alberta_framework.core.update_safety import (
 )
 
 _FLOAT32_MAX = float(np.finfo(np.float32).max)
+_FLOAT32_MIN = float(np.finfo(np.float32).min)
 _FLOAT32_TINY = float(np.finfo(np.float32).tiny)
 _MINIMUM_EXP_LOG = math.log(_FLOAT32_TINY)
 _MAXIMUM_NU_LOG = math.log(-math.log(_FLOAT32_TINY))
@@ -1811,6 +1812,47 @@ def _runtime_checked_value(
     )
 
 
+def _temperature_scaled_logits(logits: Array, temperature: float) -> Array:
+    """Scale logits for softmax without exposing a rounded argmax to fusion.
+
+    XLA may recompute ``logits * (1 / temperature)`` inside both fused
+    subcomputations of a compiled ``jax.nn.softmax``/``jax.nn.log_softmax``.
+    The contracted multiply-then-subtract leaves a rounding residual at the
+    argmax instead of an exact zero; once ``|logits / temperature|`` is large
+    enough that residual drives the exponential to ``inf`` or ``0`` and a
+    finite input yields a NaN policy, a silently rejected update, or a dropped
+    gradient.
+
+    Both shifts below are exact (softmax and log-softmax are shift invariant),
+    and each blocks one of the two recomputations.  When the temperature
+    exceeds one, halving both operands first is equally exact and keeps the
+    pre-scale centering finite for opposite finite extreme logits whose
+    pairwise distance exceeds the float32 maximum — inputs where the plain
+    ``logits / temperature`` expression stays finite and must stay finite.
+
+    For temperatures at or below one, that centering subtraction and the
+    division itself can still overflow: float32 cannot represent the pairwise
+    distance of ``[3e38, -3e38]``, so the shifted quotient reaches ``-inf``
+    and downstream ``probability * log_probability`` entropy products evaluate
+    ``0 * -inf`` as NaN.  The negative tail is therefore clamped to the finite
+    floating-point minimum, which is exact for every reported quantity:
+    ``exp(floor)`` underflows to zero exactly like ``exp(-inf)``, so softmax
+    results, derived probabilities, and the normalization sum are unchanged,
+    while log-probabilities stay finite and gradients remain finite.
+    """
+    if temperature > 1.0:
+        # Halving both operands is exact and prevents centering opposite finite
+        # extremes from overflowing before a large temperature brings them in range.
+        logits = logits * 0.5
+        temperature *= 0.5
+    # Both shifts preserve softmax/log-softmax while keeping division in range.
+    centered = logits - jax.lax.stop_gradient(jnp.max(logits))
+    scaled = centered / temperature
+    shifted = scaled - jax.lax.stop_gradient(jnp.max(scaled))
+    # NaN propagates through maximum, so genuine NaN inputs still surface.
+    return jnp.maximum(shifted, _FLOAT32_MIN)
+
+
 class RecurrentTraceActorCriticAgent:
     """One-transition-at-a-time softmax actor-critic with RTU-RTRL.
 
@@ -2033,7 +2075,9 @@ class RecurrentTraceActorCriticAgent:
     ) -> Array:
         """Return the softmax policy of the already-advanced actor state."""
         logits = self._network_output(state.actor_params, state.actor_rtu_state)
-        return jax.nn.softmax(logits / self._config.temperature)
+        return jax.nn.softmax(
+            _temperature_scaled_logits(logits, self._config.temperature)
+        )
 
     @functools.partial(jax.jit, static_argnums=(0,))
     def value(
@@ -2053,7 +2097,7 @@ class RecurrentTraceActorCriticAgent:
     ) -> tuple[Array, Array, Array]:
         """Sample from the current recurrent policy without advancing it."""
         logits = self._network_output(state.actor_params, state.actor_rtu_state)
-        tempered_logits = logits / self._config.temperature
+        tempered_logits = _temperature_scaled_logits(logits, self._config.temperature)
         probabilities = jax.nn.softmax(tempered_logits)
         key, sample_key = jr.split(state.rng_key)
         action = jr.categorical(
@@ -2279,7 +2323,9 @@ class RecurrentTraceActorCriticAgent:
         entropy_sign = jax.lax.stop_gradient(jnp.sign(td_error))
 
         def policy_objective(logits: Array) -> Array:
-            log_probabilities = jax.nn.log_softmax(logits / self._config.temperature)
+            log_probabilities = jax.nn.log_softmax(
+                _temperature_scaled_logits(logits, self._config.temperature)
+            )
             probabilities = jnp.exp(log_probabilities)
             entropy = -jnp.sum(probabilities * log_probabilities)
             return (
@@ -2535,7 +2581,9 @@ class RecurrentTraceActorCriticAgent:
             state.actor_params,
             state.actor_rtu_state,
         )
-        current_log_policy = jax.nn.log_softmax(current_logits / self._config.temperature)
+        current_log_policy = jax.nn.log_softmax(
+            _temperature_scaled_logits(current_logits, self._config.temperature)
+        )
         current_policy = jnp.exp(current_log_policy)
         current_entropy = -jnp.sum(current_policy * current_log_policy)
 

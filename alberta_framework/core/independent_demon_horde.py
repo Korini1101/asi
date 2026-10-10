@@ -398,6 +398,9 @@ class IndependentDemonHorde:
         if type(trace_mode) is not TraceMode:
             raise ValueError("trace_mode must be a TraceMode")
         self._horde_spec = horde_spec
+        self._terminal_rewards = jnp.array(
+            [demon.terminal_reward for demon in horde_spec.demons], dtype=jnp.float32
+        )
         self._hidden_sizes = hidden_sizes
         self._optimizer: AnyOptimizer = (
             optimizer if optimizer is not None else LMS(step_size=step_size)
@@ -798,12 +801,14 @@ class IndependentDemonHorde:
 
         # 5. Optional bounding (per-demon)
         if self._bounder is not None:
-            bounded_steps, bound_scale = self._bounder.bound(
+            # ``Bounder.bound`` returns ``(steps, metric)``; the metric is a
+            # reporting scalar (ObGD's step scale, AGC's clipped-unit fraction)
+            # and must never touch the eligibility traces, which decay by
+            # gamma * lambda alone.
+            bounded_steps, _bound_metric = self._bounder.bound(
                 tuple(all_steps), step_error, tuple(all_params)
             )
             all_steps = list(bounded_steps)
-            # Scale traces so future updates reflect the effective step
-            new_traces = [bound_scale * t for t in new_traces]
 
         # 6. Apply: param += error * step
         new_weights: list[Array] = []
@@ -943,10 +948,12 @@ class IndependentDemonHorde:
     ) -> HordeUpdateResult:
         """Update every demon's network given observation, cumulants, next obs.
 
-        Computes per-demon TD targets ``r + gamma * V(s')`` using each
-        demon's own gamma, then drives every demon's independent MLP with
-        that target. NaN cumulants suppress the update on the affected
-        demon (its params, traces, and optimizer states are preserved).
+        Computes per-demon TD targets
+        ``r + gamma * V(s') + (1 - gamma) * z`` using each demon's own
+        gamma and terminal pseudo-reward, then drives every demon's
+        independent MLP with that target. NaN cumulants suppress the
+        update on the affected demon (its params, traces, and optimizer
+        states are preserved).
 
         Args:
             state: Current state.
@@ -977,9 +984,10 @@ class IndependentDemonHorde:
             [self._predict_single(state.demon_states[i], next_observation) for i in range(n_demons)]
         )
 
-        # 2. TD targets: r + gamma * V(s'). gamma=0 must not multiply inf V(s').
+        # 2. TD targets: r + gamma * V(s') + (1 - gamma) * z. gamma=0 must not
+        # multiply inf V(s'); z is the demon's terminal pseudo-reward.
         bootstrap = jnp.where(gammas == 0.0, 0.0, gammas * next_preds)
-        targets = cumulants + bootstrap
+        targets = cumulants + bootstrap + (1.0 - gammas) * self._terminal_rewards
 
         # 3. NaN means inactive; other non-finite values are rejected heads.
         requested_mask = ~jnp.isnan(cumulants)

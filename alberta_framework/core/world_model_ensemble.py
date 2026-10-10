@@ -104,6 +104,14 @@ def _validated_config_float(name: str, value: object, **bounds: Any) -> float:
     return validated_float32_scalar(name, value, **bounds)
 
 
+def _require_one_jax_prng_key(name: str, value: Array) -> Array:
+    """Reject a key whose word payload is not one (2,) uint32 JAX PRNG key."""
+    key_data = jr.key_data(value)
+    if key_data.shape != (2,) or key_data.dtype != jnp.uint32:
+        raise ValueError(f"{name} must be one JAX PRNG key")
+    return value
+
+
 def _member_state_scalars(config: ActionConditionedWorldModelConfig) -> int:
     """Return exact default-LMS member state scalars counted by the budget surface."""
     input_dim = config.observation_dim + config.n_actions
@@ -936,6 +944,7 @@ class WorldModelEnsemble:
 
     def init(self, key: Array) -> WorldModelEnsembleState:
         """Initialize distinct members and isolated real/replay mask streams."""
+        _require_one_jax_prng_key("key", key)
         keys = jr.split(key, self._config.ensemble_size + 1)
         member_states = tuple(
             self._model.init(keys[index]) for index in range(self._config.ensemble_size)
@@ -1135,12 +1144,8 @@ class WorldModelEnsemble:
             if array.shape != shape or array.dtype != jnp.dtype(dtype):
                 raise ValueError(f"{name} must have shape {shape} and dtype {dtype}")
 
-        key_data = jr.key_data(state.bootstrap_key)
-        if key_data.shape != (2,) or key_data.dtype != jnp.uint32:
-            raise ValueError("state.bootstrap_key must be one JAX PRNG key")
-        replay_key_data = jr.key_data(state.replay_bootstrap_key)
-        if replay_key_data.shape != (2,) or replay_key_data.dtype != jnp.uint32:
-            raise ValueError("state.replay_bootstrap_key must be one JAX PRNG key")
+        _require_one_jax_prng_key("state.bootstrap_key", state.bootstrap_key)
+        _require_one_jax_prng_key("state.replay_bootstrap_key", state.replay_bootstrap_key)
 
     @staticmethod
     def _signal_state_valid(state: LearningSignalEstimatorState) -> Array:

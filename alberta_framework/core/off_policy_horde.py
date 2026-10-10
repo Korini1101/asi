@@ -237,7 +237,7 @@ class OffPolicyHordeUpdateResult:
         state: Updated shared-trunk multi-head learner state.
         predictions: Predictions at ``s_t``, shape ``(n_demons,)``.
         next_predictions: Bootstrap predictions at ``s_{t+1}``.
-        td_targets: TD targets ``c_t + gamma_t V(s_{t+1})``.
+        td_targets: TD targets ``c_t + gamma_t V(s_{t+1}) + (1 - gamma_t) z``.
         td_errors: Unweighted TD errors.
         rhos: Raw importance-sampling ratios.
         clipped_rhos: Ratios after update clipping.
@@ -400,6 +400,9 @@ class OffPolicyHordeLearner:
         )
 
         self._horde_spec = horde_spec
+        self._terminal_rewards = jnp.array(
+            [demon.terminal_reward for demon in horde_spec.demons], dtype=jnp.float32
+        )
         self._hidden_sizes = hidden_sizes
         self._optimizer: AnyOptimizer = (
             optimizer if optimizer is not None else LMS(step_size=step_size)
@@ -565,7 +568,11 @@ class OffPolicyHordeLearner:
             jnp.zeros_like(next_predictions),
             next_predictions,
         )
-        td_targets = cumulants + discounts * bootstrap_predictions
+        td_targets = (
+            cumulants
+            + discounts * bootstrap_predictions
+            + (1.0 - discounts) * self._terminal_rewards
+        )
         requested_mask = ~jnp.isnan(cumulants)
         checked_state = state
         if self._utility_decay == 0.0:
@@ -740,13 +747,14 @@ class OffPolicyHordeLearner:
             for i in range(n_trunk_layers):
                 trunk_params_flat.append(state.trunk_params.weights[i])
                 trunk_params_flat.append(state.trunk_params.biases[i])
+            # The bounder's metric is a reporting scalar (ObGD's step scale,
+            # AGC's clipped-unit fraction); it must never scale the traces.
             bounded_trunk_steps, trunk_bounding_metric = self._bounder.bound(
                 tuple(trunk_steps),
                 jnp.array(1.0, dtype=jnp.float32),
                 tuple(trunk_params_flat),
             )
             trunk_steps = list(bounded_trunk_steps)
-            new_trunk_traces = [trunk_bounding_metric * t for t in new_trunk_traces]
 
         new_trunk_weights: list[Array] = []
         new_trunk_biases: list[Array] = []
@@ -819,15 +827,15 @@ class OffPolicyHordeLearner:
             optimizer_updates_applied.extend((w_update_applied, b_update_applied))
             step_error = _gradient_step_error(head_optimizer, error_i)
 
+            # Head bounding only rescales the applied step; the traces keep
+            # their gamma * lambda decay.
             if self._bounder is not None:
-                bounded_head_steps, bound_scale = self._bounder.bound(
+                bounded_head_steps, _bound_metric = self._bounder.bound(
                     (w_step, b_step),
                     step_error,
                     (head_w, head_b),
                 )
                 w_step, b_step = bounded_head_steps
-                new_w_trace = bound_scale * new_w_trace
-                new_b_trace = bound_scale * new_b_trace
 
             new_w = head_w + step_error * w_step
             new_b = head_b + step_error * b_step
@@ -1082,6 +1090,9 @@ class NonlinearSharedGTDHordeLearner:
                 raise ValueError(f"{name} must contain values in [0, 1]")
         hidden_size = _require_int32("hidden_size", hidden_size, minimum=1)
         self._horde_spec = horde_spec
+        self._terminal_rewards = jnp.array(
+            [demon.terminal_reward for demon in horde_spec.demons], dtype=jnp.float32
+        )
         self._hidden_size = hidden_size
         self._primary_step_size = _require_float32(
             "primary_step_size", primary_step_size, positive=True
@@ -1324,7 +1335,11 @@ class NonlinearSharedGTDHordeLearner:
             jnp.zeros_like(next_predictions),
             next_predictions,
         )
-        td_targets = cumulants + discounts * bootstrap_predictions
+        td_targets = (
+            cumulants
+            + discounts * bootstrap_predictions
+            + (1.0 - discounts) * self._terminal_rewards
+        )
         td_errors = td_targets - predictions
         requested = ~jnp.isnan(cumulants)
         active_mask = (

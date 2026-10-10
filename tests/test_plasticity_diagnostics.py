@@ -21,6 +21,7 @@ from alberta_framework.benchmarks.plasticity_diagnostics import (
     OFFICIAL_CODE_COMMIT,
     PAPER_REVISION,
     PROFILES,
+    SCHEMA,
     costly_lane_gates,
     main,
     require_costly_lane,
@@ -52,11 +53,30 @@ def test_hidden_network_lane_runs_end_to_end_and_mechanism_off_is_exact() -> Non
     assert control.task_loss == mechanism_off.task_loss
     assert control.final_state_sha256 == mechanism_off.final_state_sha256
     assert control.receipt.replacements == mechanism_off.receipt.replacements == 0
+    assert control.receipt.replacements_by_layer == (0, 0, 0)
+    assert mechanism_off.receipt.replacements_by_layer == (0, 0, 0)
     assert cbp.receipt.replacements > 0
+    assert all(count > 0 for count in cbp.receipt.replacements_by_layer)
     assert result.development_only and not result.scientific_promotion_allowed
     assert result.negative_results_must_be_retained
     assert not result.task_boundary_available_to_learner
     assert not result.task_id_available_to_learner
+
+
+def test_bounded_lane_preserves_the_paper_three_hidden_layer_topology() -> None:
+    profile = PROFILES["contract-smoke"]
+    state = plasticity_diagnostics._init_diagnostic_state(
+        jax.random.key(0), profile.hidden_width
+    )
+    logits, hidden1, hidden2, hidden3 = plasticity_diagnostics._forward_diagnostic(
+        state, np.zeros((2, INPUT_DIM), dtype=np.float32)
+    )
+    assert SCHEMA == "asi.loss_of_plasticity_mnist_development.v2"
+    assert state.w1.shape == (INPUT_DIM, profile.hidden_width)
+    assert state.w2.shape == state.w3.shape == (profile.hidden_width, profile.hidden_width)
+    assert state.w4.shape == (profile.hidden_width, 10)
+    assert hidden1.shape == hidden2.shape == hidden3.shape == (2, profile.hidden_width)
+    assert logits.shape == (2, 10)
 
 
 def test_jit_and_eager_paths_match_except_timing() -> None:
@@ -84,9 +104,12 @@ def test_exact_resource_receipts_and_validator_reject_forgery() -> None:
         assert arm.receipt.diagnostic_model_queries == 8
         assert arm.receipt.model_queries == 24
         assert arm.receipt.parameter_updates == 8
-        assert arm.receipt.logical_forward_macs == 24 * (INPUT_DIM * 8 + 8 * 8 + 8 * 10)
-        assert arm.receipt.logical_gradient_macs == 16 * (INPUT_DIM * 8 + 8 * 8 + 8 * 10)
-        assert arm.receipt.persistent_bytes == 25_904
+        per_forward_macs = INPUT_DIM * 8 + 8 * 8 + 8 * 8 + 8 * 10
+        assert arm.receipt.logical_forward_macs == 24 * per_forward_macs
+        assert arm.receipt.logical_gradient_macs == 16 * per_forward_macs
+        assert arm.receipt.persistent_bytes == 26_260
+        assert len(arm.receipt.replacements_by_layer) == 3
+        assert sum(arm.receipt.replacements_by_layer) == arm.receipt.replacements
         assert arm.receipt.timing_telemetry_only
     forged_receipt = dataclasses.replace(result.arms[0].receipt, model_queries=8)
     forged = dataclasses.replace(
@@ -95,8 +118,49 @@ def test_exact_resource_receipts_and_validator_reject_forgery() -> None:
     )
     with pytest.raises(ValueError, match="resource receipt"):
         validate_result(forged)
+    with pytest.raises(ValueError, match="equal total"):
+        dataclasses.replace(result.arms[2].receipt, replacements_by_layer=(0, 0, 0))
+    # One layer claims more replacements than the run has steps: the total (11) still
+    # sits inside the three-layer bound, so only the per-layer bound can reject it.
+    over_layer = dataclasses.replace(
+        result.arms[2].receipt, replacements=11, replacements_by_layer=(9, 1, 1)
+    )
+    with pytest.raises(ValueError, match="resource receipt"):
+        validate_result(
+            dataclasses.replace(
+                result,
+                arms=(*result.arms[:2], dataclasses.replace(result.arms[2], receipt=over_layer)),
+            )
+        )
+    # A contract-smoke candidate whose replacements all land in one layer never
+    # exercised the other two replacement paths.
+    one_layer = dataclasses.replace(
+        result.arms[2].receipt, replacements=1, replacements_by_layer=(1, 0, 0)
+    )
+    with pytest.raises(ValueError, match="every CBP replacement path"):
+        validate_result(
+            dataclasses.replace(
+                result,
+                arms=(*result.arms[:2], dataclasses.replace(result.arms[2], receipt=one_layer)),
+            )
+        )
     with pytest.raises(ValueError, match="exact DiagnosticResult"):
         validate_result(dataclasses.asdict(result))
+
+
+def test_dead_unit_fraction_is_normalized_over_three_hidden_layers() -> None:
+    profile = PROFILES["contract-smoke"]
+    width = profile.hidden_width
+    inputs = np.ones((2, INPUT_DIM), dtype=np.float32)
+    state = plasticity_diagnostics._init_diagnostic_state(jax.random.key(0), width)
+    all_dead = jax.tree.map(lambda leaf: leaf * 0, state)
+    fraction, last_hidden = plasticity_diagnostics._dead_unit_fraction(all_dead, inputs, width)
+    assert fraction == 1.0
+    assert last_hidden.shape == (2, width)
+    # Layer one alive through a positive bias; layers two and three dead.
+    first_alive = all_dead._replace(b1=all_dead.b1 + 1.0)
+    fraction, _ = plasticity_diagnostics._dead_unit_fraction(first_alive, inputs, width)
+    assert fraction == 2.0 / 3.0
 
 
 def test_profiles_are_immutable_and_result_binds_the_complete_profile() -> None:

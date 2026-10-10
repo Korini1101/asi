@@ -29,7 +29,11 @@ def test_box_rejects_oversized_range_bounds_before_tuple_hang() -> None:
             high=range(_MAX_ARRAY_ELEMENTS + 1),
             semantic_id="obs",
         )
-    assert time.perf_counter() - started < 0.25
+    # Not a latency contract: gate removal is message-pinned — the ungated
+    # tuple()/convert walk (~0.1 s) succeeds, so ``pytest.raises`` itself
+    # fails. This budget is an anti-runaway guard only, sized for
+    # shared-CI-runner load of the class observed in run 36962287499.
+    assert time.perf_counter() - started < 5.0
 
 
 def test_box_rejects_oversized_range_shape_before_tuple_hang() -> None:
@@ -42,7 +46,9 @@ def test_box_rejects_oversized_range_shape_before_tuple_hang() -> None:
             high=None,
             semantic_id="obs",
         )
-    assert time.perf_counter() - started < 0.25
+    # Not a latency contract: gate removal is message-pinned (the ungated
+    # walk succeeds); anti-runaway guard only under shared-CI-runner load.
+    assert time.perf_counter() - started < 5.0
 
 
 def test_box_encode_rejects_oversized_range_before_numpy_convert() -> None:
@@ -56,7 +62,10 @@ def test_box_encode_rejects_oversized_range_before_numpy_convert() -> None:
     started = time.perf_counter()
     with pytest.raises(ValueError, match="array element limit"):
         spec.encode(range(_MAX_ARRAY_ELEMENTS + 1))
-    assert time.perf_counter() - started < 0.25
+    # Not a latency contract: gate removal is message-pinned (the ungated
+    # numpy conversion succeeds); anti-runaway guard only under
+    # shared-CI-runner load.
+    assert time.perf_counter() - started < 5.0
 
 
 def test_box_still_accepts_matched_bounds() -> None:

@@ -1260,11 +1260,21 @@ def _update_option_model(
     decay = jnp.asarray(model_decay, dtype=jnp.float32)
     lr = jnp.asarray(model_step_size, dtype=jnp.float32)
 
-    new_cumreward = decay * models.cumreward_ema + (1.0 - decay) * pseudo_return
-    new_env_return = decay * models.env_return_ema + (1.0 - decay) * env_return
-    new_duration = decay * models.duration_ema + (1.0 - decay) * duration
-    new_baseline_mass = decay * models.baseline_mass_ema + (1.0 - decay) * baseline_mass
-    new_discount = decay * models.discount_ema + (1.0 - decay) * discount
+    # An EMA blended against its initial value is biased toward that value, and
+    # planning consumes these the moment n_completions reaches 1. Seed each EMA
+    # with the first observed completion so a one-sample model reports that
+    # sample exactly, instead of (1 - decay) * sample for the outcome terms and
+    # decay * 1.0 for the discount (which would bootstrap through a terminal).
+    unseeded = models.n_completions == 0
+
+    def _blend(previous: Array, observed: Array) -> Array:
+        return jnp.where(unseeded, observed, decay * previous + (1.0 - decay) * observed)
+
+    new_cumreward = _blend(models.cumreward_ema, pseudo_return)
+    new_env_return = _blend(models.env_return_ema, env_return)
+    new_duration = _blend(models.duration_ema, duration)
+    new_baseline_mass = _blend(models.baseline_mass_ema, baseline_mass)
+    new_discount = _blend(models.discount_ema, discount)
 
     predicted_delta = models.next_state_weights[option_idx] @ start_obs
     actual_delta = end_obs - start_obs
@@ -1777,7 +1787,21 @@ class STOMPAgent:
         return self._config.to_config()
 
     def init(self, key: Array) -> STOMPState:
-        """Initialize agent state for a given observation dimensionality."""
+        """Initialize agent state for a given observation dimensionality.
+
+        Raises:
+            TypeError: If ``key`` is not a scalar typed JAX PRNG key.  The
+                state contract (``state_valid``) rejects every other key
+                shape, so accepting one here would prime an agent whose every
+                later transaction is silently dropped.
+        """
+        if not (
+            hasattr(key, "shape")
+            and hasattr(key, "dtype")
+            and key.shape == ()
+            and jax.dtypes.issubdtype(key.dtype, jax.dtypes.prng_key)
+        ):
+            raise TypeError("key must be a scalar typed JAX PRNG key")
         obs_dim = self._config.observation_dim
         n_prim = self._config.n_primitive_actions
         n_opt = self._config.n_options
@@ -2066,6 +2090,8 @@ class STOMPAgent:
         The returned diagnostics are ``(applied_count, mean_td_error)``.
         Average reward is intentionally not part of the carry: imagined
         outcomes must not update the real experience reward-rate estimate.
+        Likewise each backup is a one-step update from empty eligibility, and
+        the real-experience eligibility traces are restored afterwards.
         """
         cfg = self._config
         completed_mask = (models.n_completions > 0) & extended_action_mask[
@@ -2111,13 +2137,34 @@ class STOMPAgent:
                     .at[option_action]
                     .set(target)
                 )
+                # A Dyna backup is a one-step update at the anchor: start
+                # from empty eligibility so real-experience traces neither
+                # receive the imagined TD error nor absorb its gradient.
+                one_step_state = cast(
+                    MultiHeadMLPState,
+                    current_learner_state.replace(
+                        head_traces=jax.tree_util.tree_map(
+                            jnp.zeros_like, current_learner_state.head_traces
+                        ),
+                        trunk_traces=jax.tree_util.tree_map(
+                            jnp.zeros_like, current_learner_state.trunk_traces
+                        ),
+                    ),
+                )
                 update_result = self._base_learner.update(
-                    current_learner_state,
+                    one_step_state,
                     anchor_observation,
                     targets,
                 )
                 td_error = update_result.errors[option_action]
-                return update_result.state, td_sum + td_error
+                restored_state = cast(
+                    MultiHeadMLPState,
+                    update_result.state.replace(
+                        head_traces=current_learner_state.head_traces,
+                        trunk_traces=current_learner_state.trunk_traces,
+                    ),
+                )
+                return restored_state, td_sum + td_error
 
             planned_state, td_sum = jax.lax.fori_loop(
                 0,

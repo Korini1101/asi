@@ -613,6 +613,31 @@ class SARSAAgent:
         """Number of discrete actions."""
         return self._sarsa_config.n_actions
 
+    def reset_control_traces(self, state: SARSAState) -> SARSAState:
+        """Clear the control-head eligibility traces at an episode boundary.
+
+        ``update`` clears these traces itself when ``terminated`` is set, and
+        skips the bootstrap at the same time. A truncated episode keeps its
+        bootstrap (the last state is not terminal) but still ends the
+        trajectory, so credit accumulated in the traces must not be applied
+        to the first update of the next, unrelated episode. Parameters,
+        optimizer states, prediction-demon traces, and counters are untouched.
+        """
+        if type(state) is not SARSAState:
+            raise ValueError("state must be a SARSAState")
+        n_actions = self._sarsa_config.n_actions
+        head_traces = list(state.learner_state.head_traces)
+        for i in range(n_actions):
+            w_trace, b_trace = head_traces[i]
+            head_traces[i] = (jnp.zeros_like(w_trace), jnp.zeros_like(b_trace))
+        learner_state = state.learner_state.replace(  # type: ignore[attr-defined]
+            head_traces=tuple(head_traces)
+        )
+        return cast(
+            SARSAState,
+            state.replace(learner_state=learner_state),  # type: ignore[attr-defined]
+        )
+
     def to_config(self) -> dict[str, Any]:
         """Serialize agent configuration to dict."""
         horde_config = self._horde.to_config()
@@ -1114,6 +1139,11 @@ def run_sarsa_episode(
         action = next_action
 
         if terminated or truncated:
+            if truncated and not terminated:
+                # The update above bootstrapped correctly (no terminal), but
+                # the episode still ends here: never let its eligibility
+                # traces credit the next episode's first transition.
+                state = agent.reset_control_traces(state)
             break
 
     return SARSAEpisodeResult(
@@ -1200,6 +1230,26 @@ def run_sarsa_continuing(
     )
 
 
+def _sarsa_successor_observations(
+    observations: Array,
+    terminated: Array,
+    next_observations: Array,
+) -> Array:
+    """Return the observation each row continues from, as ``run_sarsa_continuing`` does.
+
+    A terminal row never bootstraps, so the continuing runner hands the update
+    the reset observation instead: the next action is selected there and it
+    becomes the stored ``last_observation`` for the following row. In arrays
+    that reset observation is ``observations[t + 1]``. A terminal final row
+    has no following row and keeps ``next_observations[-1]``.
+    """
+    if observations.shape != next_observations.shape:
+        raise ValueError("observations and next_observations must have the same shape")
+    following = jnp.concatenate([observations[1:], next_observations[-1:]], axis=0)
+    ended = jnp.asarray(terminated) != 0
+    return jnp.where(ended[:, None], following, next_observations)
+
+
 def run_sarsa_from_arrays(
     agent: SARSAAgent,
     state: SARSAState,
@@ -1213,6 +1263,11 @@ def run_sarsa_from_arrays(
     JIT-compiled for maximum throughput. Actions are selected on-policy
     within the scan. Use this loop when transitions are pre-collected
     arrays rather than produced by a live environment interaction loop.
+
+    Row ``t`` is the transition ``observations[t] -> next_observations[t]``.
+    As in :func:`run_sarsa_continuing`, a terminal row does not bootstrap and
+    the agent continues from the reset observation ``observations[t + 1]``:
+    the next action is selected there and stored for the following update.
 
     Args:
         agent: SARSA agent
@@ -1238,26 +1293,29 @@ def run_sarsa_from_arrays(
         "next_observations", next_observations, expected=num_steps
     )
 
+    successor_observations = _sarsa_successor_observations(
+        observations, terminated, next_observations
+    )
+
     @jax.jit
     def _scan_fn(
         carry: SARSAState,
-        inputs: tuple[Array, Array, Array, Array],
+        inputs: tuple[Array, Array, Array],
     ) -> tuple[SARSAState, tuple[Array, Array, Array]]:
         s = carry
-        obs, r, term, next_obs = inputs
+        r, term, successor_obs = inputs
 
-        # Select next action for next_obs
-        next_action, new_key = agent.select_action(s, next_obs)
+        # Select the next action where the agent actually continues
+        next_action, new_key = agent.select_action(s, successor_obs)
         s = s.replace(rng_key=new_key)  # type: ignore[attr-defined]
 
-        # Update using current obs/reward/next_obs
-        result = agent.update(s, r, next_obs, term, next_action)
+        result = agent.update(s, r, successor_obs, term, next_action)
 
         return result.state, (result.q_values, result.td_error, result.action)
 
     t0 = time.time()
     final_state, (q_vals, td_errs, actions) = jax.lax.scan(
-        _scan_fn, state, (observations, rewards, terminated, next_observations)
+        _scan_fn, state, (rewards, terminated, successor_observations)
     )
     elapsed = time.time() - t0
 
@@ -1301,23 +1359,27 @@ def run_sarsa_from_arrays_final_state(
         "next_observations", next_observations, expected=num_steps
     )
 
+    successor_observations = _sarsa_successor_observations(
+        observations, terminated, next_observations
+    )
+
     @jax.jit
     def _scan_fn(
         carry: SARSAState,
-        inputs: tuple[Array, Array, Array, Array],
+        inputs: tuple[Array, Array, Array],
     ) -> tuple[SARSAState, None]:
         s = carry
-        _obs, r, term, next_obs = inputs
-        next_action, new_key = agent.select_action(s, next_obs)
+        r, term, successor_obs = inputs
+        next_action, new_key = agent.select_action(s, successor_obs)
         s = s.replace(rng_key=new_key)  # type: ignore[attr-defined]
-        result = agent.update(s, r, next_obs, term, next_action)
+        result = agent.update(s, r, successor_obs, term, next_action)
         return result.state, None
 
     t0 = time.time()
     final_state, _ = jax.lax.scan(
         _scan_fn,
         state,
-        (observations, rewards, terminated, next_observations),
+        (rewards, terminated, successor_observations),
     )
     elapsed = time.time() - t0
     final_learner = final_state.learner_state.replace(  # type: ignore[attr-defined]
