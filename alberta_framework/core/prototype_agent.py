@@ -3954,6 +3954,17 @@ class PrototypeAgent:
             )
 
         executing = stomp_state.executing_option >= 0
+        if stomp_config.n_options == 0:
+            # lax.cond traces both branches, but a zero-option configuration
+            # has no option-policy row that the unreachable branch can index.
+            gradient_payload = base_source(None)
+        else:
+            gradient_payload = jax.lax.cond(
+                executing,
+                intra_option_source,
+                base_source,
+                operand=None,
+            )
         (
             raw_gradient,
             prediction,
@@ -3963,12 +3974,7 @@ class PrototypeAgent:
             option_terminates,
             parameters_finite,
             source_indices_valid,
-        ) = jax.lax.cond(
-            executing,
-            intra_option_source,
-            base_source,
-            operand=None,
-        )
+        ) = gradient_payload
         inputs_finite = (
             jnp.all(jnp.isfinite(current))
             & jnp.all(jnp.isfinite(bootstrap))

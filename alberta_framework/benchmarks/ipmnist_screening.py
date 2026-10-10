@@ -329,8 +329,14 @@ logger = logging.getLogger(__name__)
 
 LEGACY_SHARD_SCHEMA = "alberta.ipmnist_screening.shard.v1"
 SHARD_SCHEMA = "alberta.ipmnist_screening.shard.v2"
+# v3 marks gradual-protocol shards: the v2 field set plus ``noise_gradual_steps``.
+# Step- and pool-mode shards keep the v2 schema and exact v2 key set, so every
+# existing campaign artifact stays byte-compatible and loadable.
+SHARD_SCHEMA_V3 = "alberta.ipmnist_screening.shard.v3"
 LEGACY_SUMMARY_SCHEMA = "alberta.ipmnist_screening.summary.v1"
 SUMMARY_SCHEMA = "alberta.ipmnist_screening.summary.v2"
+# Produced only from v3 gradual shards; records ``noise_gradual_steps``.
+SUMMARY_SCHEMA_V3 = "alberta.ipmnist_screening.summary.v3"
 LEGACY_VALIDATION_SCHEMA = "alberta.ipmnist_screening.proxy_validation.v1"
 VALIDATION_SCHEMA = "alberta.ipmnist_screening.proxy_validation.v2"
 SOURCE_PROVENANCE_SCHEMA = "alberta.ipmnist_screening.source_provenance.v1"
@@ -3646,6 +3652,11 @@ def guarded_adam_update(
 def _make_guarded_cbp_adam_learner(
     hp: Mapping[str, float],
 ) -> tuple[LearnerInitFn, ScreeningStepFn]:
+    # Use the control graph for the exact mechanism-off reduction. Keeping
+    # dead guard state changes XLA fusion and can perturb plasticity telemetry.
+    if hp["guard_scale"] == 0.0:
+        return _make_adamw_cbp_learner(hp)
+
     def init_fn(params: dict[str, Array]) -> GuardedAdamCBPState:
         zeros = {name: jnp.zeros_like(value) for name, value in params.items()}
         return GuardedAdamCBPState(  # type: ignore[call-arg]
@@ -4244,7 +4255,13 @@ def _make_rff_rls_learner(
         w1_bits = jax.lax.bitcast_convert_type(
             params["w1"].astype(jnp.float32).reshape(-1), jnp.uint32
         )
-        key = jr.fold_in(jr.key(jnp.uint32(_RFF_KEY_DOMAIN)), w1_bits[0])
+        # The frozen Omega/b draw is identity-bearing: the domain root is
+        # pinned to explicit threefry2x32 so the recorded (arm, seed, source)
+        # identity pins the feature map regardless of the ambient
+        # jax_default_prng_impl.
+        key = jr.fold_in(
+            jr.key(jnp.uint32(_RFF_KEY_DOMAIN), impl="threefry2x32"), w1_bits[0]
+        )
         key = jr.fold_in(key, w1_bits[-1])
         key_omega, key_phase = jr.split(key)
         omega = jr.normal(key_omega, (m, input_dim), jnp.float32) * math.sqrt(gamma)
@@ -4593,6 +4610,25 @@ class RLSHeadL2InitState:
     init_params: dict[str, Array]
 
 
+@chex.dataclass(frozen=True)
+class RLSHeadSMState:
+    """Opt-in RLS carry plus per-weight second moments for the body.
+
+    This distinct state keeps the incumbent :class:`RLSHeadState` schema
+    unchanged (the L2-Init precedent).  ``sm`` holds one second-moment EMA
+    per residual-trained body tensor; the parallel protocol head and the
+    RLS state carry no second moment.
+    """
+
+    utility: dict[str, Array]
+    step: Array
+    norm: EMANormState
+    fast_mean: Array
+    p: Array
+    wout: Array
+    sm: dict[str, Array]
+
+
 def _rls_head_hp(**overrides: float) -> dict[str, float]:
     """Champion (``sigma0_shiftnorm_d099``) constants plus RLS-head defaults.
 
@@ -4732,6 +4768,27 @@ def _make_rls_head_learner(
         raise ValueError("gate_scale=0.0 is supported only for the residual body")
     if _decay_to_init and (not resid or not gate_enabled):
         raise ValueError("L2-Init is supported only for the gated residual body")
+    sm_decay = hp.get("body_sm_decay", 0.0)
+    if not 0.0 <= sm_decay < 1.0:
+        raise ValueError("body_sm_decay must lie in [0, 1)")
+    sm_enabled = sm_decay > 0.0
+    sm_step = hp.get("body_sm_step", 0.0)
+    sm_eps = hp.get("body_sm_eps", 1e-8)
+    if sm_enabled:
+        if not resid or not gate_enabled:
+            raise ValueError(
+                "body_sm preconditioning is supported only for the gated "
+                "residual body"
+            )
+        if whiten_enabled or newton or _decay_to_init:
+            raise ValueError(
+                "body_sm preconditioning is not composed with resid_whiten, "
+                "resid_newton, or L2-Init"
+            )
+        if sm_step <= 0.0 or not math.isfinite(sm_step):
+            raise ValueError("body_sm_step must be positive and finite")
+        if sm_eps <= 0.0 or not math.isfinite(sm_eps):
+            raise ValueError("body_sm_eps must be positive and finite")
 
     def normalize(
         state: EMANormState, fast_mean: Array, x: Array
@@ -4748,10 +4805,29 @@ def _make_rls_head_learner(
 
     def init_fn(
         params: dict[str, Array],
-    ) -> RLSHeadState | RLSHeadL2InitState:
+    ) -> RLSHeadState | RLSHeadL2InitState | RLSHeadSMState:
         input_dim = params["w1"].shape[0]
         m = params["w2"].shape[1] + 1
         n_classes = params["w3"].shape[1]
+        if sm_enabled:
+            return RLSHeadSMState(  # type: ignore[call-arg]
+                utility={
+                    name: jnp.zeros_like(value) for name, value in params.items()
+                },
+                step=jnp.array(0, dtype=jnp.int32),
+                norm=EMANormState(  # type: ignore[call-arg]
+                    mean=jnp.zeros(input_dim, dtype=jnp.float32),
+                    var=jnp.ones(input_dim, dtype=jnp.float32),
+                    count=jnp.zeros(input_dim, dtype=jnp.float32),
+                ),
+                fast_mean=jnp.zeros(input_dim, dtype=jnp.float32),
+                p=jnp.eye(m, dtype=jnp.float32) / ridge_init,
+                wout=jnp.zeros((m, n_classes), dtype=jnp.float32),
+                sm={
+                    name: jnp.zeros_like(params[name])
+                    for name in _RLS_HEAD_BODY
+                },
+            )
         if _decay_to_init:
             return RLSHeadL2InitState(  # type: ignore[call-arg]
                 utility={
@@ -4846,12 +4922,14 @@ def _make_rls_head_learner(
 
     def full_step(
         params: dict[str, Array],
-        state: RLSHeadState | RLSHeadL2InitState,
+        state: RLSHeadState | RLSHeadL2InitState | RLSHeadSMState,
         x: Array,
         y: Array,
         key: Array,
     ) -> tuple[
-        dict[str, Array], RLSHeadState | RLSHeadL2InitState, StepMetrics
+        dict[str, Array],
+        RLSHeadState | RLSHeadL2InitState | RLSHeadSMState,
+        StepMetrics,
     ]:
         del key  # sigma-0 body, closed-form head: no randomness consumed
         if _decay_to_init:
@@ -4932,7 +5010,55 @@ def _make_rls_head_learner(
                 (loss, (logits, phi)), body_grads = jax.value_and_grad(
                     head_loss, has_aux=True
                 )(body)
-            if gate_enabled:
+            if sm_enabled:
+                assert isinstance(state, RLSHeadSMState)
+                # Champion utility EMA and sigmoid gate byte-identical to
+                # _gated_sgd; only the step geometry changes: the raw body
+                # gradient is preconditioned per weight by the bias-corrected
+                # second-moment EMA before the gated, decayed step.
+                new_utility = dict(state.utility)
+                for name in _RLS_HEAD_BODY:
+                    new_utility[name] = utility_decay * state.utility[name] + (
+                        1.0 - utility_decay
+                    ) * (-body_grads[name] * params[name])
+                bias_correction = 1.0 - jnp.power(
+                    jnp.asarray(utility_decay, dtype=jnp.float32),
+                    count.astype(jnp.float32),
+                )
+                global_max = jnp.max(
+                    jnp.stack(
+                        [
+                            jnp.max(new_utility[name])
+                            for name in sorted(_RLS_HEAD_BODY)
+                        ]
+                    )
+                )
+                global_max = jnp.where(global_max == 0.0, 1.0, global_max)
+                sm_bias = 1.0 - jnp.power(
+                    jnp.asarray(sm_decay, dtype=jnp.float32),
+                    count.astype(jnp.float32),
+                )
+                new_sm = dict(state.sm)
+                new_params = dict(params)
+                for name in _RLS_HEAD_BODY:
+                    new_sm[name] = sm_decay * state.sm[name] + (
+                        1.0 - sm_decay
+                    ) * (body_grads[name] * body_grads[name])
+                    v_hat = new_sm[name] / sm_bias
+                    precond_grad = body_grads[name] / (
+                        jnp.sqrt(v_hat) + sm_eps
+                    )
+                    new_params[name] = params[name] * param_decay - sm_step * (
+                        precond_grad
+                        * (
+                            1.0
+                            - jax.nn.sigmoid(
+                                (new_utility[name] / bias_correction)
+                                / global_max
+                            )
+                        )
+                    )
+            elif gate_enabled:
                 new_params, new_utility = _gated_sgd(
                     params,
                     body_grads,
@@ -4991,6 +5117,17 @@ def _make_rls_head_learner(
         plasticity = jnp.clip(
             1.0 - loss_after / jnp.maximum(loss, _PLASTICITY_LOSS_FLOOR), 0.0, 1.0
         )
+        if sm_enabled:
+            assert isinstance(state, RLSHeadSMState)
+            return new_params, RLSHeadSMState(  # type: ignore[call-arg]
+                utility=new_utility,
+                step=count,
+                norm=new_norm,
+                fast_mean=new_fast,
+                p=new_p,
+                wout=new_wout,
+                sm=new_sm,
+            ), (accuracy, loss, plasticity)
         if _decay_to_init:
             assert isinstance(state, RLSHeadL2InitState)
             return new_params, RLSHeadL2InitState(  # type: ignore[call-arg]
@@ -5028,7 +5165,7 @@ class RLSHeadIdentState:
     (identity until the first match of each task).
     """
 
-    inner: RLSHeadState
+    inner: RLSHeadState | RLSHeadSMState
     raw_norm: EMANormState
     raw_fast: Array
     ref_class_sums: Array
@@ -8204,6 +8341,13 @@ def _build_registry() -> dict[str, ScreeningSpec]:
                 ),
             )
         )
+    # The smprecond_r1 second-moment body-preconditioning arms
+    # (rls_head_resid_sm{3e4,1e3}_i50r) failed their preregistered outcome
+    # — sm1e3 lost the 60t screen on all seeds and sm3e4 failed the
+    # 200-task confirmation at +0.0011 vs the frozen +0.002 bar (negative
+    # result #23) — and are deregistered.  The mechanism (body_sm_* knobs,
+    # RLSHeadSMState) and its reduction pins are retained; the shards bind
+    # the commits that ran them (PROVENANCE_HEADS.md).
     specs.append(
         ScreeningSpec(
             name="rls_head_resid_l1_preset005_l2init",
@@ -8836,17 +8980,79 @@ def _validated_screening_noise_mode(
     """Validate one screening noise mode against the named arm's runner contract."""
     prefix = "" if context is None else f"{context}: "
     if type(noise_mode) is not str:
-        raise ValueError(f"{prefix}noise_mode must be 'step' or 'pool'")
-    if noise_mode not in ("step", "pool"):
+        raise ValueError(f"{prefix}noise_mode must be 'step', 'pool', or 'gradual'")
+    if noise_mode not in ("step", "pool", "gradual"):
         raise ValueError(
-            f"{prefix}noise_mode must be 'step' or 'pool', got {noise_mode!r}"
+            f"{prefix}noise_mode must be 'step', 'pool', or 'gradual', "
+            f"got {noise_mode!r}"
         )
     if noise_mode == "pool" and spec.noise_update is None:
         raise ValueError(
             f"{prefix}noise_mode='pool' is unsupported for {spec.name!r}: the arm "
             "declares no noise-consuming update"
         )
+    if noise_mode == "gradual" and spec.mechanism in {
+        "c_chain",
+        "replay_in_context",
+        "frozen_feature_ceiling",
+    }:
+        raise ValueError(
+            f"{prefix}noise_mode='gradual' is unsupported for {spec.name!r}: the "
+            "mechanism receipt requires exact-step execution"
+        )
     return noise_mode
+
+
+def _validated_screening_gradual_steps(
+    noise_mode: str,
+    noise_gradual_steps: object,
+    *,
+    context: Path | str | None = None,
+    task_length: int | None = None,
+) -> int | None:
+    """Return the effective gradual-transition contract for one run or shard.
+
+    Step- and pool-mode runs transition tasks abruptly, so their canonical
+    effective value is ``None``. A gradual run must record a built-in integer
+    window ``>= 1``: the number of steps at the start of each task over which
+    the input mapping ramps from the previous task's permutation to the
+    current one. Window 1 is the exact abrupt protocol and is retained as the
+    auditable mechanism-off reduction.
+
+    When the run's ``task_length`` is known, the window must also satisfy
+    ``window <= task_length``: each task's ramp has exactly ``task_length``
+    entries, so a longer window would end every task below ``alpha = 1.0``
+    and the next task would restart the interpolation from the pure previous
+    permutation instead of the blended mapping actually shown last — a
+    cross-task discontinuity the recorded window cannot describe.
+    """
+    prefix = "" if context is None else f"{context}: "
+    if noise_mode != "gradual":
+        if noise_gradual_steps is not _MISSING_NOISE_POOL_STEPS and (
+            noise_gradual_steps is not None
+        ):
+            raise ValueError(
+                f"{prefix}noise_gradual_steps must be null or absent when "
+                f"noise_mode={noise_mode!r}"
+            )
+        return None
+    if noise_gradual_steps is _MISSING_NOISE_POOL_STEPS:
+        raise ValueError(
+            f"{prefix}noise_gradual_steps must be recorded when noise_mode='gradual'"
+        )
+    if type(noise_gradual_steps) is not int or noise_gradual_steps < 1:
+        raise ValueError(
+            f"{prefix}noise_gradual_steps must be recorded as a built-in integer >= 1 "
+            "when noise_mode='gradual'"
+        )
+    if task_length is not None and noise_gradual_steps > task_length:
+        raise ValueError(
+            f"{prefix}noise_gradual_steps must not exceed the run's task_length "
+            f"{task_length}: the per-task ramp has exactly task_length entries, so a "
+            "longer window never completes the transition and the next task would "
+            "restart from the pure previous permutation"
+        )
+    return noise_gradual_steps
 
 
 def _validated_screening_noise_pool_steps(
@@ -8868,11 +9074,11 @@ def _validated_screening_noise_pool_steps(
     closes.
     """
     prefix = "" if context is None else f"{context}: "
-    if noise_mode == "step":
+    if noise_mode != "pool":
         if noise_pool_steps is not _MISSING_NOISE_POOL_STEPS and noise_pool_steps is not None:
             raise ValueError(
                 f"{prefix}noise_pool_steps must be null or absent when "
-                "noise_mode='step'"
+                f"noise_mode={noise_mode!r}"
             )
         return None
     if noise_pool_steps is _MISSING_NOISE_POOL_STEPS:
@@ -9824,6 +10030,7 @@ class ScreeningRunResult:
     wall_clock_seconds: float
     noise_mode: str = "step"
     noise_pool_steps: int | None = None
+    noise_gradual_steps: int | None = None
     mechanism_diagnostics: dict[str, float] | None = None
 
     def __post_init__(self) -> None:
@@ -9833,8 +10040,12 @@ class ScreeningRunResult:
                 raise ValueError(f"{attr} must be a non-empty string")
         if type(self.base_learner) is not str or self.base_learner not in ("upgd_w", "adamw"):
             raise ValueError("base_learner must name one supported screening learner")
-        if type(self.noise_mode) is not str or self.noise_mode not in ("step", "pool"):
-            raise ValueError("noise_mode must be 'step' or 'pool'")
+        if type(self.noise_mode) is not str or self.noise_mode not in (
+            "step",
+            "pool",
+            "gradual",
+        ):
+            raise ValueError("noise_mode must be 'step', 'pool', or 'gradual'")
         if type(self.hyperparameters) is not dict:
             raise TypeError("hyperparameters must be a dict")
         normalized: dict[str, float] = {}
@@ -9875,6 +10086,15 @@ class ScreeningRunResult:
             self,
             "noise_pool_steps",
             _validated_screening_noise_pool_steps(self.noise_mode, self.noise_pool_steps),
+        )
+        object.__setattr__(
+            self,
+            "noise_gradual_steps",
+            _validated_screening_gradual_steps(
+                self.noise_mode,
+                self.noise_gradual_steps,
+                task_length=self.config.task_length,
+            ),
         )
         diagnostics = self.mechanism_diagnostics
         if diagnostics is not None:
@@ -10833,6 +11053,22 @@ def noise_curvature_development_result_payload(
     return validate_noise_curvature_development_result(payload)
 
 
+def _gradual_ramp(task_length: int, window: int) -> Array:
+    """Return the deterministic gradual-protocol alpha sequence for one task.
+
+    Entry ``i`` is ``min((i + 1) / window, 1.0)`` as float32, so the input
+    mapping reaches the current task's permutation exactly on step ``window``
+    and holds it for the remainder of the task. The construction is
+    RNG-free: given ``task_length`` and ``window`` the sequence is fully
+    determined, which is what makes the protocol auditable from its recorded
+    window alone.
+    """
+    return jnp.minimum(
+        (jnp.arange(task_length, dtype=jnp.float32) + 1.0) / jnp.float32(window),
+        jnp.float32(1.0),
+    )
+
+
 def run_screening_config(
     data_x: np.ndarray | Array,
     data_y: np.ndarray | Array,
@@ -10842,6 +11078,7 @@ def run_screening_config(
     progress_every: int | None = None,
     noise_mode: str = "step",
     noise_pool_steps: int = 64,
+    noise_gradual_steps: int = 64,
     *,
     _task_observer: Callable[[int, Mapping[str, Array], Any], None] | None = None,
 ) -> ScreeningRunResult:
@@ -10860,6 +11097,25 @@ def run_screening_config(
     approximation: they record ``noise_mode`` and their effective
     ``noise_pool_steps`` and never merge with exact shards nor pass proxy
     validation.
+
+    ``noise_mode="gradual"`` is the deterministic gradual-change protocol
+    (#1569): the input mapping ramps from the previous task's permutation to
+    the current one across the first ``noise_gradual_steps`` steps of each
+    task via ``x = (1 - alpha) * data_x[e][perm_prev] + alpha *
+    data_x[e][perm]`` with ``alpha = (i + 1) / noise_gradual_steps`` capped at
+    1.0. The ramp draws no RNG keys, so the protocol is fully deterministic
+    given the seed, and window 1 collapses bitwise to the abrupt ``step``
+    protocol. Because each task's ramp has exactly ``task_length`` entries,
+    the window is capped at ``task_length``: a longer window would end every
+    task below ``alpha = 1.0`` and the next task would restart the
+    interpolation from the pure previous permutation, a cross-task
+    discontinuity the recorded window could not describe. This lane's tasks
+    differ only by input permutation, so the
+    transition is input-side only; labels are invariant across tasks.
+    Gradual shards are a screening-only protocol artifact: they record
+    ``noise_mode`` and ``noise_gradual_steps`` in a v3 schema, never merge
+    with exact shards, never pass proxy validation, and never produce a
+    mechanism receipt.
     """
     if progress_every is not None and (
         type(progress_every) is not int or progress_every <= 0
@@ -10894,6 +11150,11 @@ def run_screening_config(
     effective_noise_pool_steps = _validated_screening_noise_pool_steps(
         noise_mode,
         noise_pool_steps if noise_mode == "pool" else None,
+    )
+    effective_noise_gradual_steps = _validated_screening_gradual_steps(
+        noise_mode,
+        noise_gradual_steps if noise_mode == "gradual" else None,
+        task_length=config.task_length,
     )
     resolved_x, resolved_y = _validated_ipmnist_data(
         data_x,
@@ -10987,19 +11248,67 @@ def run_screening_config(
         return params, state, key, accuracies, losses, plasticities
 
     run_task_jit = jax.jit(run_task_pool if noise_mode == "pool" else run_task)
+    if noise_mode == "gradual":
+        assert effective_noise_gradual_steps is not None
+        ramp = _gradual_ramp(config.task_length, effective_noise_gradual_steps)
+        no_transition = jnp.ones(config.task_length, dtype=jnp.float32)
+
+        def run_task_gradual(
+            params: dict[str, Array],
+            state: Any,
+            key: Array,
+            prev_permutation: Array,
+            permutation: Array,
+            alphas: Array,
+            examples: Array,
+        ) -> tuple[dict[str, Array], Any, Array, Array, Array, Array]:
+            def one_step(
+                carry: tuple[dict[str, Array], Any, Array], xs: tuple[Array, Array]
+            ) -> tuple[tuple[dict[str, Array], Any, Array], StepMetrics]:
+                example, alpha = xs
+                step_params, step_state, key = carry
+                x = (jnp.float32(1.0) - alpha) * data_x[example][
+                    prev_permutation
+                ] + alpha * data_x[example][permutation]
+                y = data_y[example]
+                key, step_key = jr.split(key)
+                new_params, new_state, metrics = step_fn(
+                    step_params, step_state, x, y, step_key
+                )
+                return (new_params, new_state, key), metrics
+
+            (params, state, key), (accuracies, losses, plasticities) = jax.lax.scan(
+                one_step, (params, state, key), (examples, alphas)
+            )
+            return params, state, key, accuracies, losses, plasticities
+
+        run_task_gradual_jit = jax.jit(run_task_gradual)
 
     task_accuracy: list[float] = []
     task_loss: list[float] = []
     task_plasticity: list[float] = []
     started = time.monotonic()
     for task in range(config.n_tasks):
-        params, state, key_noise, accuracies, losses, plasticities = run_task_jit(
-            params,
-            state,
-            key_noise,
-            schedule.permutations[task],
-            schedule.example_indices[task],
-        )
+        if noise_mode == "gradual":
+            params, state, key_noise, accuracies, losses, plasticities = (
+                run_task_gradual_jit(
+                    params,
+                    state,
+                    key_noise,
+                    schedule.permutations[task - 1] if task else schedule.permutations[0],
+                    schedule.permutations[task],
+                    ramp if task else no_transition,
+                    schedule.example_indices[task],
+                )
+            )
+        else:
+            params, state, key_noise, accuracies, losses, plasticities = run_task_jit(
+                params,
+                state,
+                key_noise,
+                schedule.permutations[task],
+                schedule.example_indices[task],
+            )
         if spec.mechanism == "l2_effective_rank":
             if type(state) is not L2ERState or not bool(state.transaction_valid):
                 raise RuntimeError("L2-ER update transaction became invalid")
@@ -11046,6 +11355,7 @@ def run_screening_config(
         wall_clock_seconds=time.monotonic() - started,
         noise_mode=noise_mode,
         noise_pool_steps=effective_noise_pool_steps,
+        noise_gradual_steps=effective_noise_gradual_steps,
         mechanism_diagnostics=mechanism_diagnostics,
     )
 
@@ -11083,6 +11393,7 @@ _V2_SHARD_FIELDS = frozenset(
     }
 )
 _V2_MECHANISM_SHARD_FIELDS = _V2_SHARD_FIELDS | frozenset({"mechanism_receipt"})
+_V3_SHARD_FIELDS = _V2_SHARD_FIELDS | frozenset({"noise_gradual_steps"})
 
 
 def _require_exact_keys(
@@ -11422,7 +11733,12 @@ def shard_payload(
     dataset_provenance: Mapping[str, object],
     environment: Mapping[str, object],
 ) -> dict[str, Any]:
-    """Serialize one bound (config, seed) screening run as a strict v2 shard."""
+    """Serialize one bound (config, seed) screening run as a strict shard.
+
+    Step- and pool-mode runs keep the exact v2 schema and key set; a
+    gradual-mode run writes the v3 schema, which adds
+    ``noise_gradual_steps``.
+    """
     seed = require_jax_seed(result.seed, name="result seed")
     if type(result.base_learner) is not str or not result.base_learner:
         raise ValueError("new shard base_learner must be a non-empty string")
@@ -11437,6 +11753,11 @@ def shard_payload(
     noise_mode = _validated_screening_noise_mode(result.noise_mode, spec)
     noise_pool_steps = _validated_screening_noise_pool_steps(
         noise_mode, result.noise_pool_steps
+    )
+    noise_gradual_steps = _validated_screening_gradual_steps(
+        noise_mode,
+        result.noise_gradual_steps,
+        task_length=result.config.task_length,
     )
     source_binding = _validated_source_provenance(source_provenance, context="new shard")
     dataset_binding = _validated_dataset_provenance(dataset_provenance, context="new shard")
@@ -11463,7 +11784,7 @@ def shard_payload(
         result.wall_clock_seconds, "new shard"
     )
     payload: dict[str, Any] = {
-        "schema": SHARD_SCHEMA,
+        "schema": SHARD_SCHEMA_V3 if noise_mode == "gradual" else SHARD_SCHEMA,
         "evidence_policy": dict(NONPROMOTING_POLICY),
         "config_name": result.config_name,
         "base_learner": result.base_learner,
@@ -11483,6 +11804,8 @@ def shard_payload(
         "dataset_provenance": dataset_binding,
         "environment": runtime_binding,
     }
+    if noise_mode == "gradual":
+        payload["noise_gradual_steps"] = noise_gradual_steps
     if spec.mechanism in {
         "c_chain",
         "replay_in_context",
@@ -11522,25 +11845,29 @@ def load_shard(
     *,
     spec_registry: Mapping[str, ScreeningSpec] | None = None,
 ) -> dict[str, Any]:
-    """Load legacy v1 or strictly validate a source-bound v2 screening shard."""
+    """Load legacy v1 or strictly validate a source-bound v2/v3 screening shard."""
     registry = SCREENING_REGISTRY if spec_registry is None else spec_registry
     payload = load_strict_json_object(path)
     schema = payload.get("schema")
-    if schema not in {LEGACY_SHARD_SCHEMA, SHARD_SCHEMA}:
+    if schema not in {LEGACY_SHARD_SCHEMA, SHARD_SCHEMA, SHARD_SCHEMA_V3}:
         raise ValueError(
-            f"{path}: not a supported {LEGACY_SHARD_SCHEMA} or {SHARD_SCHEMA} shard"
+            f"{path}: not a supported {LEGACY_SHARD_SCHEMA}, {SHARD_SCHEMA}, or "
+            f"{SHARD_SCHEMA_V3} shard"
         )
-    is_v2 = schema == SHARD_SCHEMA
-    if is_v2:
+    is_bound = schema in {SHARD_SCHEMA, SHARD_SCHEMA_V3}
+    if is_bound:
         config_name_value = payload.get("config_name")
-        expected_fields = (
-            _V2_MECHANISM_SHARD_FIELDS
-            if type(config_name_value) is str
-            and config_name_value in SCREENING_REGISTRY
-            and SCREENING_REGISTRY[config_name_value].mechanism
-            in {"c_chain", "replay_in_context", "frozen_feature_ceiling"}
-            else _V2_SHARD_FIELDS
-        )
+        if schema == SHARD_SCHEMA_V3:
+            expected_fields = _V3_SHARD_FIELDS
+        else:
+            expected_fields = (
+                _V2_MECHANISM_SHARD_FIELDS
+                if type(config_name_value) is str
+                and config_name_value in SCREENING_REGISTRY
+                and SCREENING_REGISTRY[config_name_value].mechanism
+                in {"c_chain", "replay_in_context", "frozen_feature_ceiling"}
+                else _V2_SHARD_FIELDS
+            )
         _require_exact_keys(payload, expected_fields, context=str(path))
         payload["evidence_policy"] = _validated_nonpromoting_policy(
             payload["evidence_policy"], context=str(path)
@@ -11570,7 +11897,7 @@ def load_shard(
         payload["config"], _IPMNIST_CONFIG_FIELDS, context=f"{path}: config"
     )
     config = IPMNISTConfig(**payload["config"])
-    if is_v2:
+    if is_bound:
         _validate_dataset_config_binding(
             payload["dataset_provenance"], config, context=str(path)
         )
@@ -11606,11 +11933,11 @@ def load_shard(
     base_learner = _required_nonempty_string(
         payload.get("base_learner"), context=f"{path}: base_learner"
     )
-    if is_v2 and base_learner != spec.base_learner:
+    if is_bound and base_learner != spec.base_learner:
         raise ValueError(
             f"{path}: base_learner must match registered arm {spec.base_learner!r}"
         )
-    if is_v2:
+    if is_bound:
         payload["hyperparameters"] = _validated_registered_hyperparameters(
             payload.get("hyperparameters"), spec, context=str(path)
         )
@@ -11692,19 +12019,31 @@ def load_shard(
     noise_mode = _validated_screening_noise_mode(
         payload.get("noise_mode", "step"), spec, context=path
     )
+    if schema == SHARD_SCHEMA_V3 and noise_mode != "gradual":
+        raise ValueError(
+            f"{path}: {SHARD_SCHEMA_V3} shards record the gradual protocol; "
+            f"noise_mode={noise_mode!r} belongs in a {SHARD_SCHEMA} shard"
+        )
     noise_pool_steps = _validated_screening_noise_pool_steps(
         noise_mode,
         payload.get("noise_pool_steps", _MISSING_NOISE_POOL_STEPS),
         context=path,
-        allow_unrecorded_pool=not is_v2,
+        allow_unrecorded_pool=not is_bound,
+    )
+    noise_gradual_steps = _validated_screening_gradual_steps(
+        noise_mode,
+        payload.get("noise_gradual_steps", _MISSING_NOISE_POOL_STEPS),
+        context=path,
+        task_length=config.task_length,
     )
     payload["noise_mode"] = noise_mode
     payload["noise_pool_steps"] = noise_pool_steps
+    payload["noise_gradual_steps"] = noise_gradual_steps
     payload["config_name"] = config_name
     payload["base_learner"] = base_learner
     if not isinstance(payload.get("hyperparameters"), dict):
         raise ValueError(f"{path}: hyperparameters must be an object")
-    if not is_v2:
+    if not is_bound:
         environment = payload.get("environment")
         required_environment_fields = ("jax", "numpy", "python", "platform")
         if not isinstance(environment, dict) or any(
@@ -11904,18 +12243,21 @@ def merge_shards(
         raise ValueError("no shards given")
     shard_schemas = {shard["schema"] for shard in shards}
     if len(shard_schemas) != 1:
-        raise ValueError("shards span multiple shard schemas; merge v1 and v2 separately")
+        raise ValueError(
+            "shards span multiple shard schemas; merge v1, v2, and v3 separately"
+        )
     shard_schema = shard_schemas.pop()
+    is_bound_schema = shard_schema in {SHARD_SCHEMA, SHARD_SCHEMA_V3}
     source_provenance = (
         _screening_batch_binding(
             shards, field="source_provenance", label="source provenance"
         )
-        if shard_schema == SHARD_SCHEMA
+        if is_bound_schema
         else None
     )
     dataset_provenance = (
         _screening_batch_binding(shards, field="dataset_provenance", label="dataset")
-        if shard_schema == SHARD_SCHEMA
+        if is_bound_schema
         else None
     )
     configs = {tuple(sorted(s["config"].items())) for s in shards}
@@ -11926,10 +12268,15 @@ def merge_shards(
     noise_modes = {s["noise_mode"] for s in shards}
     if len(noise_modes) != 1:
         raise ValueError(
-            "shards span multiple noise modes (pool results are a screening-only "
-            "approximation); merge them separately"
+            "shards span multiple noise modes (pool and gradual results are "
+            "screening-only approximations); merge them separately"
         )
     noise_mode = noise_modes.pop()
+    if shard_schema == SHARD_SCHEMA_V3 and noise_mode != "gradual":
+        raise ValueError(
+            f"{SHARD_SCHEMA_V3} shards record the gradual protocol; the merged "
+            f"batch records noise_mode={noise_mode!r}"
+        )
     unrecorded_pool_shards = [
         f"{s['config_name']}/seed={s['seed']}"
         for s in shards
@@ -11946,6 +12293,23 @@ def merge_shards(
             "pool-mode shards span multiple noise_pool_steps values; merge them separately"
         )
     noise_pool_steps = noise_pool_sizes.pop()
+    unrecorded_gradual_shards = [
+        f"{s['config_name']}/seed={s['seed']}"
+        for s in shards
+        if noise_mode == "gradual" and s["noise_gradual_steps"] is None
+    ]
+    if unrecorded_gradual_shards:
+        raise ValueError(
+            "gradual-mode shard(s) do not record noise_gradual_steps; rerun them to a "
+            f"new path before merging (unrecorded: {unrecorded_gradual_shards})"
+        )
+    gradual_windows = {s["noise_gradual_steps"] for s in shards}
+    if len(gradual_windows) != 1:
+        raise ValueError(
+            "gradual-mode shards span multiple noise_gradual_steps values; "
+            "merge them separately"
+        )
+    noise_gradual_steps = gradual_windows.pop()
     reference_environment = _screening_batch_environment(shards)
     by_config: dict[str, dict[int, dict[str, Any]]] = {}
     for shard in shards:
@@ -12062,8 +12426,14 @@ def merge_shards(
         entries.append(entry)
 
     entries.sort(key=lambda e: e["average_online_accuracy_mean"], reverse=True)
+    if shard_schema == SHARD_SCHEMA_V3:
+        summary_schema = SUMMARY_SCHEMA_V3
+    elif shard_schema == SHARD_SCHEMA:
+        summary_schema = SUMMARY_SCHEMA
+    else:
+        summary_schema = LEGACY_SUMMARY_SCHEMA
     summary: dict[str, Any] = {
-        "schema": SUMMARY_SCHEMA if shard_schema == SHARD_SCHEMA else LEGACY_SUMMARY_SCHEMA,
+        "schema": summary_schema,
         "evidence_policy": dict(NONPROMOTING_POLICY),
         "created_unix": time.time(),
         "protocol_config": dict(shards[0]["config"]),
@@ -12076,6 +12446,8 @@ def merge_shards(
         "n_shards": len(shards),
         "results": entries,
     }
+    if shard_schema == SHARD_SCHEMA_V3:
+        summary["noise_gradual_steps"] = noise_gradual_steps
     if source_provenance is not None and dataset_provenance is not None:
         summary["source_provenance"] = source_provenance
         summary["dataset_provenance"] = dataset_provenance
@@ -12373,7 +12745,7 @@ def _screening_derivation_bindings(
     if not shard_paths:
         return None
     first = load_strict_json_object(Path(shard_paths[0]))
-    if first.get("schema") != SHARD_SCHEMA:
+    if first.get("schema") not in {SHARD_SCHEMA, SHARD_SCHEMA_V3}:
         return None
     return _screening_source_provenance(), _screening_runtime_environment()
 
@@ -12383,7 +12755,7 @@ def _require_v2_derivation_context(
     bindings: tuple[dict[str, object], dict[str, object]] | None,
 ) -> None:
     schema = payload.get("schema")
-    if schema not in {SUMMARY_SCHEMA, VALIDATION_SCHEMA}:
+    if schema not in {SUMMARY_SCHEMA, SUMMARY_SCHEMA_V3, VALIDATION_SCHEMA}:
         return
     if bindings is None:
         raise RuntimeError("v2 derivation did not capture a source/runtime context")
@@ -12424,15 +12796,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     run_p.add_argument("--out", type=Path, required=True)
     run_p.add_argument("--progress-every", type=int, default=10)
     run_p.add_argument(
-        "--noise-mode", choices=("step", "pool"), default="step",
+        "--noise-mode", choices=("step", "pool", "gradual"), default="step",
         help="'pool' = screening-only pool-noise approximation "
-             "(lean-UPGD-family arms only; never mergeable with exact shards)",
+             "(lean-UPGD-family arms only; never mergeable with exact shards); "
+             "'gradual' = deterministic gradual input-transition protocol "
+             "(#1569; never mergeable with exact shards, no mechanism receipt)",
     )
     run_p.add_argument(
         "--noise-pool-steps",
         type=int,
         default=64,
         help="effective pool size recorded in pool-mode shards (must be >= 2)",
+    )
+    run_p.add_argument(
+        "--noise-gradual-steps",
+        type=int,
+        default=64,
+        help="input-transition window recorded in gradual-mode shards "
+             "(must be >= 1; 1 collapses to the abrupt protocol)",
     )
 
     merge_p = sub.add_parser("merge", help="merge shards into a ranked summary")
@@ -12485,19 +12866,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         dataset_provenance = _screening_dataset_provenance(data_x, data_y)
         logger.info(
             "running %s seed=%d for %d tasks x %d steps "
-            "(noise_mode=%s, noise_pool_steps=%s)",
+            "(noise_mode=%s, noise_pool_steps=%s, noise_gradual_steps=%s)",
             spec.name,
             seed,
             config.n_tasks,
             config.task_length,
             args.noise_mode,
             args.noise_pool_steps if args.noise_mode == "pool" else None,
+            args.noise_gradual_steps if args.noise_mode == "gradual" else None,
         )
         result = run_screening_config(
             data_x, data_y, spec, seed, config,
             progress_every=args.progress_every,
             noise_mode=args.noise_mode,
             noise_pool_steps=args.noise_pool_steps,
+            noise_gradual_steps=args.noise_gradual_steps,
         )
         if _screening_source_provenance() != source_provenance:
             raise RuntimeError("screening source provenance changed during execution")
