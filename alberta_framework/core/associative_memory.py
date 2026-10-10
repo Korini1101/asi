@@ -812,7 +812,11 @@ class AssociativeMemoryLearner:
 
     def _weighted_feature_loss(self, row_values: Array, weights: Array, label: Array) -> Array:
         evidence = jnp.sum(weights[:, None] * row_values, axis=0)
-        logits = self._config.logit_scale * evidence
+        # Center on both sides of the scale, as in the per-row loss below;
+        # this value feeds cross entropy only, which is shift invariant.
+        centered = evidence - jax.lax.stop_gradient(jnp.max(evidence))
+        logits = self._config.logit_scale * centered
+        logits = logits - jax.lax.stop_gradient(jnp.max(logits))
         total_weight = jnp.sum(weights)
         if self._config.normalize_by_weight:
             logits = jnp.where(total_weight > 0.0, logits / total_weight, logits)
@@ -1090,7 +1094,26 @@ class AssociativeMemoryLearner:
             slot_values = carry.values[slot]
             old_row = jnp.where(found_scalar, slot_values, jnp.zeros_like(slot_values))
             old_utility = jnp.where(found_scalar, carry.utility[slot], 0.0)
-            row_logits = self._config.logit_scale * old_row
+            # Center the scaled array itself. Cross entropy is shift
+            # invariant, but the compiled product ``logit_scale * old_row`` is
+            # recomputed inside the max-subtraction fusion and contracted into
+            # an FMA, so the difference at the maximum is the rounding error of
+            # that product instead of exactly zero. Subtracting the maximum of
+            # the product, rather than of its operand, makes that entry an
+            # exact zero whatever the compiler recomputes.
+            # Center on both sides of the scale. Cross entropy is shift
+            # invariant, so both subtractions are exact, and each blocks a
+            # different recomputation: XLA re-forms the product inside the
+            # max-subtraction fusion and contracts it into an FMA, so the
+            # difference at the maximum becomes the rounding error of the
+            # product instead of exactly zero. Centering the operand makes the
+            # maximum entry an exact zero before the multiply; centering the
+            # product covers the case where the subtraction itself is the part
+            # that gets re-formed. Either one alone was measured insufficient
+            # on some shape.
+            centered_row = old_row - jax.lax.stop_gradient(jnp.max(old_row))
+            scaled_row = self._config.logit_scale * centered_row
+            row_logits = scaled_row - jax.lax.stop_gradient(jnp.max(scaled_row))
             feature_loss = jnp.where(
                 found_scalar,
                 _cross_entropy_from_logits(row_logits, label),

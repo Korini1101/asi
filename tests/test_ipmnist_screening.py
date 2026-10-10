@@ -28,6 +28,8 @@ from alberta_framework.benchmarks.ipmnist_screening import (
     PROXY_N_TASKS,
     SCREENING_REGISTRY,
     SHARD_SCHEMA,
+    SHARD_SCHEMA_V3,
+    SUMMARY_SCHEMA_V3,
     AdamCBPState,
     CBPState,
     EMANormState,
@@ -1449,7 +1451,7 @@ class TestShardsAndMerge:
             load_shard(path)
 
         assert str(exc_info.value) == (
-            f"{path}: noise_mode must be 'step' or 'pool', got 'teleport'"
+            f"{path}: noise_mode must be 'step', 'pool', or 'gradual', got 'teleport'"
         )
 
     @pytest.mark.parametrize("noise_mode", [None, True, 0, [], {}])
@@ -1616,7 +1618,7 @@ class TestShardsAndMerge:
             (
                 "upgd_w_control",
                 "teleport",
-                "noise_mode must be 'step' or 'pool'",
+                "noise_mode must be 'step', 'pool', or 'gradual'",
             ),
             (
                 "upgd_idbd",
@@ -2278,6 +2280,313 @@ class TestPoolConfirmation:
         )
         path = tmp_path / "pool.json"
         path.write_text(json.dumps(_bound_shard_payload(pool)), encoding="utf-8")
+        with pytest.raises(ValueError, match="noise_mode"):
+            validate_proxy([path], tmp_path)
+
+
+class TestGradualConfirmation:
+    """Screening-only deterministic gradual-change protocol (#1569).
+
+    ``noise_mode="gradual"`` deterministically ramps the input mapping from
+    the previous task's permutation to the current one across the first
+    ``noise_gradual_steps`` steps of each task. It draws no additional RNG
+    keys, records its window in a v3 shard schema, and never merges with
+    exact step-mode shards.
+    """
+
+    def test_gradual_window_one_collapses_to_step_bitwise(self, small_data):
+        """Mechanism-off reduction: window 1 is the exact abrupt protocol."""
+        x, y = small_data
+        step = run_screening_config(
+            x, y, screening_spec("upgd_w_control"), seed=7, config=SMALL
+        )
+        gradual = run_screening_config(
+            x, y, screening_spec("upgd_w_control"), seed=7, config=SMALL,
+            noise_mode="gradual", noise_gradual_steps=1,
+        )
+        assert gradual.noise_mode == "gradual"
+        assert gradual.noise_gradual_steps == 1
+        np.testing.assert_array_equal(gradual.per_task_accuracy, step.per_task_accuracy)
+        np.testing.assert_array_equal(gradual.per_task_loss, step.per_task_loss)
+        np.testing.assert_array_equal(
+            gradual.per_task_plasticity, step.per_task_plasticity
+        )
+
+    def test_gradual_is_deterministic_and_differs_from_step(self, small_data):
+        x, y = small_data
+        first = run_screening_config(
+            x, y, screening_spec("upgd_w_control"), seed=7, config=SMALL,
+            noise_mode="gradual", noise_gradual_steps=8,
+        )
+        second = run_screening_config(
+            x, y, screening_spec("upgd_w_control"), seed=7, config=SMALL,
+            noise_mode="gradual", noise_gradual_steps=8,
+        )
+        np.testing.assert_array_equal(first.per_task_loss, second.per_task_loss)
+        np.testing.assert_array_equal(first.per_task_accuracy, second.per_task_accuracy)
+        step = run_screening_config(
+            x, y, screening_spec("upgd_w_control"), seed=7, config=SMALL
+        )
+        assert not np.array_equal(first.per_task_loss, step.per_task_loss)
+
+    @pytest.mark.parametrize(
+        "noise_gradual_steps", [None, True, False, np.int64(8), 8.0, "8", 0, -1]
+    )
+    def test_gradual_rejects_noncanonical_window_before_data_setup(
+        self, noise_gradual_steps: object
+    ) -> None:
+        with pytest.raises(ValueError, match="noise_gradual_steps.*built-in integer >= 1"):
+            run_screening_config(
+                np.empty((1, 1), dtype=np.float32),
+                np.empty((1,), dtype=np.int32),
+                screening_spec("upgd_w_control"),
+                seed=0,
+                config=SMALL,
+                noise_mode="gradual",
+                noise_gradual_steps=noise_gradual_steps,  # type: ignore[arg-type]
+            )
+
+    def test_gradual_ramp_values_are_pinned(self):
+        """The per-task ramp is exactly (i + 1) / window capped at 1.0.
+
+        This pins the transition inputs independently of any trajectory
+        outcome: the alpha sequence, its length, its float32 dtype, the
+        exact 1.0 boundary, and the window-1 mechanism-off reduction.
+        Entries at or past the cap are exactly 1.0 (the minimum guarantees
+        it regardless of backend), and a power-of-two window divides
+        exactly, so those pins are bitwise; a non-power-of-two window may
+        pick up one float32 ulp from XLA's reciprocal-multiply lowering,
+        so its pin is tolerance-based.
+        """
+        ramp = ipmnist_screening._gradual_ramp(SMALL.task_length, 8)
+        assert isinstance(ramp, jax.Array)
+        assert ramp.dtype == jnp.float32
+        assert ramp.shape == (SMALL.task_length,)
+        expected = np.minimum(
+            (np.arange(SMALL.task_length, dtype=np.float64) + 1.0) / 8.0, 1.0
+        )
+        np.testing.assert_array_equal(np.asarray(ramp, dtype=np.float64), expected)
+        # The transition completes exactly on step `window` ...
+        assert float(ramp[7]) == 1.0
+        assert float(ramp[6]) == 7.0 / 8.0
+        # ... every entry from `window` on holds the pure current mapping ...
+        assert np.all(np.asarray(ramp[8:]) == np.float32(1.0))
+        # ... and window 1 stays the exact mechanism-off reduction.
+        one = ipmnist_screening._gradual_ramp(SMALL.task_length, 1)
+        np.testing.assert_array_equal(np.asarray(one), np.ones(SMALL.task_length))
+        # A window equal to the task length still reaches exactly 1.0 on
+        # its final step; one step earlier the alpha is 29/30 up to one
+        # float32 ulp (XLA lowers the division as a reciprocal multiply).
+        full = ipmnist_screening._gradual_ramp(SMALL.task_length, SMALL.task_length)
+        assert float(full[-1]) == 1.0
+        assert full.shape == (SMALL.task_length,)
+        np.testing.assert_allclose(
+            np.asarray(full, dtype=np.float64),
+            (np.arange(SMALL.task_length, dtype=np.float64) + 1.0) / 30.0,
+            rtol=2e-7,
+            atol=0.0,
+        )
+
+    def test_gradual_window_may_equal_but_not_exceed_task_length(self, small_data):
+        """Window == task_length completes the transition; +1 never does.
+
+        The ramp has exactly task_length entries, so a longer window would
+        end the task below alpha 1.0 and the next task would restart the
+        interpolation from the pure previous permutation — a cross-task
+        discontinuity. It is rejected before any data is touched.
+        """
+        x, y = small_data
+        full = run_screening_config(
+            x, y, screening_spec("upgd_w_control"), seed=3, config=SMALL,
+            noise_mode="gradual", noise_gradual_steps=SMALL.task_length,
+        )
+        assert full.noise_gradual_steps == SMALL.task_length
+        with pytest.raises(ValueError, match="noise_gradual_steps.*task_length"):
+            run_screening_config(
+                x, y, screening_spec("upgd_w_control"), seed=3, config=SMALL,
+                noise_mode="gradual", noise_gradual_steps=SMALL.task_length + 1,
+            )
+
+    def test_gradual_window_above_task_length_rejected_before_data_setup(self):
+        with pytest.raises(ValueError, match="noise_gradual_steps.*task_length"):
+            run_screening_config(
+                np.empty((1, 1), dtype=np.float32),
+                np.empty((1,), dtype=np.int32),
+                screening_spec("upgd_w_control"),
+                seed=0,
+                config=SMALL,
+                noise_mode="gradual",
+                noise_gradual_steps=SMALL.task_length + 1,
+            )
+
+    def test_gradual_result_rejects_window_above_task_length(self):
+        spec = screening_spec("upgd_w_control")
+        with pytest.raises(ValueError, match="noise_gradual_steps.*task_length"):
+            ipmnist_screening.ScreeningRunResult(
+                config_name=spec.name,
+                base_learner=spec.base_learner,
+                hyperparameters=dict(spec.hyperparameters),
+                seed=0,
+                config=SMALL,
+                per_task_accuracy=np.zeros(SMALL.n_tasks),
+                per_task_loss=np.zeros(SMALL.n_tasks),
+                per_task_plasticity=np.zeros(SMALL.n_tasks),
+                wall_clock_seconds=0.0,
+                noise_mode="gradual",
+                noise_gradual_steps=SMALL.task_length + 1,
+            )
+
+    @pytest.mark.parametrize("noise_gradual_steps", [8, True, np.int64(8)])
+    def test_step_result_rejects_recorded_gradual_window(
+        self, noise_gradual_steps: object
+    ) -> None:
+        spec = screening_spec("upgd_w_control")
+        with pytest.raises(ValueError, match="noise_gradual_steps"):
+            ipmnist_screening.ScreeningRunResult(
+                config_name=spec.name,
+                base_learner=spec.base_learner,
+                hyperparameters=dict(spec.hyperparameters),
+                seed=0,
+                config=SMALL,
+                per_task_accuracy=np.zeros(SMALL.n_tasks),
+                per_task_loss=np.zeros(SMALL.n_tasks),
+                per_task_plasticity=np.zeros(SMALL.n_tasks),
+                wall_clock_seconds=0.0,
+                noise_gradual_steps=noise_gradual_steps,  # type: ignore[arg-type]
+            )
+
+    def test_gradual_rejected_for_receipt_mechanisms(self, small_data):
+        x, y = small_data
+        with pytest.raises(ValueError, match="gradual"):
+            run_screening_config(
+                x, y, screening_spec("cchain_projective_only"), seed=0, config=SMALL,
+                noise_mode="gradual", noise_gradual_steps=8,
+            )
+
+    def test_gradual_shard_records_mode_and_window(self, tmp_path, small_data):
+        x, y = small_data
+        gradual = run_screening_config(
+            x, y, screening_spec("upgd_w_control"), seed=0, config=SMALL,
+            noise_mode="gradual", noise_gradual_steps=8,
+        )
+        payload = _bound_shard_payload(gradual)
+        assert payload["schema"] == SHARD_SCHEMA_V3
+        assert payload["noise_mode"] == "gradual"
+        assert payload["noise_gradual_steps"] == 8
+        assert payload["noise_pool_steps"] is None
+        path = tmp_path / "gradual.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        loaded = load_shard(path)
+        assert loaded["schema"] == SHARD_SCHEMA_V3
+        assert loaded["noise_mode"] == "gradual"
+        assert loaded["noise_gradual_steps"] == 8
+
+    def test_step_shard_keeps_v2_schema_without_gradual_field(
+        self, tmp_path, small_data
+    ):
+        x, y = small_data
+        exact = run_screening_config(
+            x, y, screening_spec("upgd_w_control"), seed=0, config=SMALL
+        )
+        payload = _bound_shard_payload(exact)
+        assert payload["schema"] == SHARD_SCHEMA
+        assert "noise_gradual_steps" not in payload
+        path = tmp_path / "step.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        assert load_shard(path)["schema"] == SHARD_SCHEMA
+
+    def test_v3_shard_rejects_non_gradual_mode(self, tmp_path, small_data):
+        """A tampered v3 shard with step mode and a null window is rejected.
+
+        The v3 schema exists to mark gradual-protocol shards, so the schema
+        and the noise mode must be bound in both directions on load: a
+        step-mode payload that claims the v3 schema (with the v3-exact key
+        set including ``noise_gradual_steps: null``) must not validate,
+        otherwise a ``SUMMARY_SCHEMA_V3`` summary could be produced with no
+        gradual window.
+        """
+        x, y = small_data
+        exact = run_screening_config(
+            x, y, screening_spec("upgd_w_control"), seed=0, config=SMALL
+        )
+        payload = _bound_shard_payload(exact)
+        assert payload["schema"] == SHARD_SCHEMA
+        tampered = dict(payload)
+        tampered["schema"] = SHARD_SCHEMA_V3
+        tampered["noise_gradual_steps"] = None
+        path = tmp_path / "v3-step.json"
+        path.write_text(json.dumps(tampered), encoding="utf-8")
+        with pytest.raises(ValueError, match="gradual"):
+            load_shard(path)
+        with pytest.raises(ValueError, match="gradual"):
+            merge_shards([path, path])
+
+    def test_gradual_and_step_shards_never_merge(self, tmp_path, small_data):
+        x, y = small_data
+        exact = run_screening_config(
+            x, y, screening_spec("upgd_w_control"), seed=0, config=SMALL
+        )
+        gradual = run_screening_config(
+            x, y, screening_spec("upgd_w_localgate"), seed=0, config=SMALL,
+            noise_mode="gradual", noise_gradual_steps=8,
+        )
+        p_exact = tmp_path / "exact.json"
+        p_gradual = tmp_path / "gradual.json"
+        p_exact.write_text(json.dumps(_bound_shard_payload(exact)), encoding="utf-8")
+        p_gradual.write_text(
+            json.dumps(_bound_shard_payload(gradual)), encoding="utf-8"
+        )
+        # A gradual run writes the v3 schema, so the schema-homogeneity gate
+        # refuses the batch before the noise-mode gate is reached; either way
+        # exact and gradual shards never rank together.
+        with pytest.raises(ValueError, match="multiple shard schemas"):
+            merge_shards([p_exact, p_gradual])
+
+    def test_gradual_shards_reject_inconsistent_windows(self, tmp_path, small_data):
+        x, y = small_data
+        wide = run_screening_config(
+            x, y, screening_spec("upgd_w_control"), seed=0, config=SMALL,
+            noise_mode="gradual", noise_gradual_steps=8,
+        )
+        narrow = run_screening_config(
+            x, y, screening_spec("upgd_w_localgate"), seed=0, config=SMALL,
+            noise_mode="gradual", noise_gradual_steps=4,
+        )
+        p_wide = tmp_path / "wide.json"
+        p_narrow = tmp_path / "narrow.json"
+        p_wide.write_text(json.dumps(_bound_shard_payload(wide)), encoding="utf-8")
+        p_narrow.write_text(
+            json.dumps(_bound_shard_payload(narrow)), encoding="utf-8"
+        )
+        with pytest.raises(ValueError, match="noise_gradual_steps"):
+            merge_shards([p_wide, p_narrow])
+
+    def test_gradual_summary_records_window(self, tmp_path, small_data):
+        x, y = small_data
+        shards = []
+        for seed in (0, 1):
+            result = run_screening_config(
+                x, y, screening_spec("upgd_w_control"), seed=seed, config=SMALL,
+                noise_mode="gradual", noise_gradual_steps=8,
+            )
+            path = tmp_path / f"gradual-{seed}.json"
+            path.write_text(
+                json.dumps(_bound_shard_payload(result)), encoding="utf-8"
+            )
+            shards.append(path)
+        summary = merge_shards(shards)
+        assert summary["schema"] == SUMMARY_SCHEMA_V3
+        assert summary["noise_mode"] == "gradual"
+        assert summary["noise_gradual_steps"] == 8
+
+    def test_validate_proxy_rejects_gradual_shards(self, tmp_path, small_data):
+        x, y = small_data
+        gradual = run_screening_config(
+            x, y, screening_spec("upgd_w_control"), seed=0, config=SMALL,
+            noise_mode="gradual", noise_gradual_steps=8,
+        )
+        path = tmp_path / "gradual.json"
+        path.write_text(json.dumps(_bound_shard_payload(gradual)), encoding="utf-8")
         with pytest.raises(ValueError, match="noise_mode"):
             validate_proxy([path], tmp_path)
 

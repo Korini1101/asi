@@ -166,15 +166,15 @@ def _preflight_actor_critic_update_working_set(n_actions: int, feature_dim: int)
 
 
 def _require_continuous_state_resources(action_dim: int, feature_dim: int) -> None:
-    state_scalars = 2 * action_dim * feature_dim + 5 * action_dim + 3 * feature_dim + 5
-    state_bytes = 8 * action_dim * feature_dim + 20 * action_dim + 12 * feature_dim + 20
+    state_scalars = 2 * action_dim * feature_dim + 6 * action_dim + 3 * feature_dim + 5
+    state_bytes = 8 * action_dim * feature_dim + 24 * action_dim + 12 * feature_dim + 20
     if state_scalars > _INT32_MAX or state_bytes > _INT32_MAX:
         raise ValueError("derived continuous actor-critic state exceeds the signed-int32 budget")
 
 
 def _continuous_actor_critic_persistent_bytes(action_dim: int, feature_dim: int) -> int:
     """Named persist already counted inside ``_require_continuous_state_resources``."""
-    return 8 * action_dim * feature_dim + 20 * action_dim + 12 * feature_dim + 20
+    return 8 * action_dim * feature_dim + 24 * action_dim + 12 * feature_dim + 20
 
 
 def _continuous_actor_critic_update_result_extras_bytes(action_dim: int) -> int:
@@ -248,8 +248,8 @@ def _require_continuous_scan_resources(
     # This is the continuous analogue of _require_discrete_scan_resources:
     # action inputs and action/mean/sigma outputs have action_dim width, while
     # the reusable workspace includes Gaussian-policy gradients and samples.
-    state_scalars = 2 * action_dim * feature_dim + 5 * action_dim + 3 * feature_dim + 5
-    state_bytes = 8 * action_dim * feature_dim + 20 * action_dim + 12 * feature_dim + 20
+    state_scalars = 2 * action_dim * feature_dim + 6 * action_dim + 3 * feature_dim + 5
+    state_bytes = 8 * action_dim * feature_dim + 24 * action_dim + 12 * feature_dim + 20
     input_scalars = num_steps * (2 * feature_dim + action_dim + 3)
     input_bytes = num_steps * (8 * feature_dim + 4 * action_dim + 9)
     output_scalars = num_steps * (3 * action_dim + 3)
@@ -296,6 +296,21 @@ def _trusted_shape(name: str, value: object) -> tuple[int, ...]:
     ):
         raise ValueError(f"{name} must expose trusted array metadata")
     return tuple(cast(Array, value).shape)
+
+
+def _require_concrete_finite(name: str, array: Array) -> Array:
+    """Reject non-finite values at an eager public boundary.
+
+    ``start`` is the only public path that commits an observation into
+    persistent state without a runtime gate, so a non-finite value accepted
+    there would poison ``last_observation`` and permanently reject every
+    later update through the state-finiteness gate. Traced inputs pass
+    through: under ``jax.jit`` or ``scan`` tracing the runtime update-side
+    finiteness gates remain authoritative.
+    """
+    if not isinstance(array, jax.core.Tracer) and not bool(jnp.all(jnp.isfinite(array))):
+        raise ValueError(f"{name} must contain only finite values")
+    return array
 
 
 def _checked_terminated(name: str, value: object) -> Array:
@@ -724,14 +739,30 @@ class ActorCriticAgent:
         ).astype(jnp.int32)
         return action, key, probs
 
-    @functools.partial(jax.jit, static_argnums=(0,))
     def start(
         self,
         state: ActorCriticState,
         observation: Array,
     ) -> tuple[ActorCriticState, Int[Array, ""], Float[Array, " n_actions"]]:
-        """Select and store the first action for a new stream or episode."""
-        observation = self._observation(state, observation)
+        """Select and store the first action for a new stream or episode.
+
+        The observation is validated eagerly at this state-committing
+        boundary: a non-finite value would otherwise be stored in
+        ``last_observation`` and reject every later update with the state
+        bitwise frozen. Traced inputs pass through to the runtime gates.
+        """
+        observation = _require_concrete_finite(
+            "observation", self._observation(state, observation)
+        )
+        return self._start(state, observation)  # type: ignore[no-any-return]
+
+    @functools.partial(jax.jit, static_argnums=(0,))
+    def _start(
+        self,
+        state: ActorCriticState,
+        observation: Array,
+    ) -> tuple[ActorCriticState, Int[Array, ""], Float[Array, " n_actions"]]:
+        """Jitted implementation of one checked episode start."""
         action, key, probs = self.select_action(state, observation)
         new_state = state.replace(  # type: ignore[attr-defined]
             last_observation=observation,
@@ -1258,7 +1289,15 @@ class ContinuousActorCriticState:
         critic_trace_weights: Trace for critic weights.
         critic_trace_bias: Trace for critic bias.
         last_observation: Previous observation ``s_t``.
-        last_action: Previous (continuous) action vector ``a_t``.
+        last_action: Previous (continuous) action vector ``a_t`` as executed,
+            i.e. after any ``[action_low, action_high]`` clipping.
+        last_sample: The Gaussian sample that produced ``last_action``, before
+            clipping. The policy-gradient score is evaluated here: the actor
+            distribution is ``N(mu, sigma^2)``, so scoring the clipped action
+            breaks ``E[grad log pi] = 0`` and drifts the mean away from any
+            active bound under a reward that carries no policy information.
+            Equals ``last_action`` when no bound is active or when a caller
+            supplies a fixed action.
         rng_key: Random key used for action sampling.
         step_count: Number of update steps taken.
     """
@@ -1275,6 +1314,7 @@ class ContinuousActorCriticState:
     critic_trace_bias: Float[Array, ""]
     last_observation: Float[Array, " feature_dim"]
     last_action: Float[Array, " action_dim"]
+    last_sample: Float[Array, " action_dim"]
     rng_key: Array
     step_count: Int[Array, ""]
 
@@ -1437,6 +1477,7 @@ class ContinuousActorCriticAgent:
             critic_trace_bias=jnp.array(0.0, dtype=jnp.float32),
             last_observation=jnp.zeros((feature_dim,), dtype=jnp.float32),
             last_action=jnp.zeros((cfg.action_dim,), dtype=jnp.float32),
+            last_sample=jnp.zeros((cfg.action_dim,), dtype=jnp.float32),
             rng_key=key,
             step_count=jnp.array(0, dtype=jnp.int32),
         )
@@ -1459,6 +1500,7 @@ class ContinuousActorCriticAgent:
             "mean_trace_bias",
             "log_sigma_trace",
             "last_action",
+            "last_sample",
         ):
             leaf = getattr(state, name)
             if leaf.shape != (action_dim,) or leaf.dtype != jnp.float32:
@@ -1530,15 +1572,34 @@ class ContinuousActorCriticAgent:
             Tuple ``(action, new_rng_key, mean, sigma)`` where ``action`` is
             optionally clipped to the configured action bounds.
         """
+        action, _sample, key, mean, sigma = self._sample_action(state, observation)
+        return action, key, mean, sigma
+
+    def _sample_action(
+        self,
+        state: ContinuousActorCriticState,
+        observation: Array,
+    ) -> tuple[
+        Float[Array, " action_dim"],
+        Float[Array, " action_dim"],
+        Array,
+        Float[Array, " action_dim"],
+        Float[Array, " action_dim"],
+    ]:
+        """Sample ``(clipped_action, gaussian_sample, new_rng_key, mean, sigma)``.
+
+        The executed action is the clipped sample; the unclipped sample is
+        what the policy actually drew and therefore what its score must be
+        evaluated at.
+        """
         observation = self._observation(state, observation)
         key, sample_key = jr.split(state.rng_key)
         mean, sigma = self.policy_params(state, observation)
         noise = jr.normal(sample_key, shape=mean.shape, dtype=jnp.float32)
-        raw_action = mean + sigma * noise
-        action = self._maybe_clip_action(raw_action)
-        return action, key, mean, sigma
+        sample = mean + sigma * noise
+        action = self._maybe_clip_action(sample)
+        return action, sample, key, mean, sigma
 
-    @functools.partial(jax.jit, static_argnums=(0,))
     def start(
         self,
         state: ContinuousActorCriticState,
@@ -1549,12 +1610,36 @@ class ContinuousActorCriticAgent:
         Float[Array, " action_dim"],
         Float[Array, " action_dim"],
     ]:
-        """Select and store the first action for a new stream or episode."""
-        observation = self._observation(state, observation)
-        action, key, mean, sigma = self.select_action(state, observation)
+        """Select and store the first action for a new stream or episode.
+
+        The observation is validated eagerly at this state-committing
+        boundary, matching the discrete agent's start contract: a non-finite
+        value would otherwise be stored in ``last_observation`` and reject
+        every later update with the state bitwise frozen. Traced inputs pass
+        through to the runtime gates.
+        """
+        observation = _require_concrete_finite(
+            "observation", self._observation(state, observation)
+        )
+        return self._start(state, observation)  # type: ignore[no-any-return]
+
+    @functools.partial(jax.jit, static_argnums=(0,))
+    def _start(
+        self,
+        state: ContinuousActorCriticState,
+        observation: Array,
+    ) -> tuple[
+        ContinuousActorCriticState,
+        Float[Array, " action_dim"],
+        Float[Array, " action_dim"],
+        Float[Array, " action_dim"],
+    ]:
+        """Jitted implementation of one checked episode start."""
+        action, sample, key, mean, sigma = self._sample_action(state, observation)
         new_state = state.replace(  # type: ignore[attr-defined]
             last_observation=observation,
             last_action=action,
+            last_sample=sample,
             rng_key=key,
         )
         return new_state, action, mean, sigma
@@ -1595,7 +1680,9 @@ class ContinuousActorCriticAgent:
             discount = _array("discount", discount, (), jnp.float32)
         cfg = self._config
         prev_obs = state.last_observation
-        action = state.last_action
+        # Score the Gaussian sample, not the clipped action that was executed:
+        # the policy is N(mu, sigma^2) and clip(a) is not a draw from it.
+        sample = state.last_sample
 
         prev_mean, prev_sigma = self.policy_params(state, prev_obs)
         value = self.value(state, prev_obs)
@@ -1610,7 +1697,7 @@ class ContinuousActorCriticAgent:
         bootstrap = jnp.where(discount == 0.0, jnp.zeros_like(next_value), discount * next_value)
         td_error = reward + bootstrap - value
 
-        diff = action - prev_mean
+        diff = sample - prev_mean
         # Gaussian score function (per-dimension):
         #   grad log pi w.r.t. mean   = diff / sigma^2
         #   grad log pi w.r.t. log_sigma = diff^2 / sigma^2 - 1
@@ -1756,10 +1843,13 @@ class ContinuousActorCriticAgent:
             lambda: state,
         )
         safe_observation = jnp.where(candidate_ok, observation, state.last_observation)
-        next_action, key, next_mean, next_sigma = self.select_action(held, safe_observation)
+        next_action, next_sample, key, next_mean, next_sigma = self._sample_action(
+            held, safe_observation
+        )
         proposed_final_state = held.replace(
             last_observation=observation,
             last_action=next_action,
+            last_sample=next_sample,
             rng_key=key,
         )
         bound_metric = actor_metric / 2.0 + critic_metric / 2.0
@@ -1767,6 +1857,7 @@ class ContinuousActorCriticAgent:
             candidate_ok
             & _floating_tree_is_finite(proposed_final_state)
             & jnp.all(jnp.isfinite(next_action))
+            & jnp.all(jnp.isfinite(next_sample))
             & jnp.all(jnp.isfinite(next_mean))
             & jnp.all(jnp.isfinite(next_sigma))
             & jnp.isfinite(bound_metric)
@@ -1882,6 +1973,7 @@ def run_continuous_actor_critic_from_arrays(
             started_state = carry.replace(  # type: ignore[attr-defined]
                 last_observation=obs,
                 last_action=fixed_action.astype(jnp.float32),
+                last_sample=fixed_action.astype(jnp.float32),
             )
             current_action = fixed_action.astype(jnp.float32)
             current_mean, current_sigma = agent.policy_params(started_state, obs)
