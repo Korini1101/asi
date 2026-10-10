@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 203, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/shaw/.codex/worktrees/finish-benchmark-issues/asi/alberta_framework/benchmarks/ipmnist_screening.py", line 12931, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/shaw/.codex/worktrees/finish-benchmark-issues/asi/alberta_framework/benchmarks/ipmnist_screening.py", line 12861, in main
+    source_provenance = _screening_source_provenance()
+  File "/home/shaw/.codex/worktrees/finish-benchmark-issues/asi/alberta_framework/benchmarks/ipmnist_screening.py", line 9278, in _screening_source_provenance
+    raise RuntimeError(
+    ...<2 lines>...
+    )
+RuntimeError: screening source worktree is not clean: untracked Python/package source or source-scope file

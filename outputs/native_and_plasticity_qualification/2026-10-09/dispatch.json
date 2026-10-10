@@ -1,0 +1,74 @@
+[
+  {
+    "exit": 0,
+    "kind": "native",
+    "label": "run",
+    "seed": 15780
+  },
+  {
+    "exit": 0,
+    "kind": "native",
+    "label": "replay",
+    "seed": 15780
+  },
+  {
+    "exit": 0,
+    "kind": "native",
+    "label": "run",
+    "seed": 15781
+  },
+  {
+    "exit": 0,
+    "kind": "native",
+    "label": "replay",
+    "seed": 15781
+  },
+  {
+    "exit": 0,
+    "kind": "native",
+    "label": "run",
+    "seed": 15782
+  },
+  {
+    "exit": 0,
+    "kind": "native",
+    "label": "replay",
+    "seed": 15782
+  },
+  {
+    "exit": 0,
+    "kind": "native",
+    "label": "run",
+    "seed": 15783
+  },
+  {
+    "exit": 0,
+    "kind": "native",
+    "label": "replay",
+    "seed": 15783
+  },
+  {
+    "exit": 0,
+    "kind": "diagnostic",
+    "label": "run",
+    "seed": 15830
+  },
+  {
+    "exit": 0,
+    "kind": "diagnostic",
+    "label": "run",
+    "seed": 15831
+  },
+  {
+    "exit": 0,
+    "kind": "diagnostic",
+    "label": "run",
+    "seed": 15832
+  },
+  {
+    "exit": 0,
+    "kind": "diagnostic",
+    "label": "run",
+    "seed": 15833
+  }
+]

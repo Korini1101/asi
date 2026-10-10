@@ -1,0 +1,24 @@
+2026-10-09 21:06:20,364 INFO loading MNIST from data_home=/tmp/asi-issue-completion/openml-cache
+2026-10-09 21:06:29,332 INFO running cpr_ipmnist seed=15639000 for 8 tasks x 5000 steps (noise_mode=step, noise_pool_steps=None, noise_gradual_steps=None)
+2026-10-09 21:06:37,850 INFO cpr_ipmnist seed=15639000 task 1/8 online_acc=0.8330 elapsed=5.6s
+2026-10-09 21:06:40,603 INFO cpr_ipmnist seed=15639000 task 2/8 online_acc=0.8630 elapsed=8.4s
+2026-10-09 21:06:43,145 INFO cpr_ipmnist seed=15639000 task 3/8 online_acc=0.8580 elapsed=10.9s
+2026-10-09 21:06:45,734 INFO cpr_ipmnist seed=15639000 task 4/8 online_acc=0.8586 elapsed=13.5s
+2026-10-09 21:06:47,925 INFO cpr_ipmnist seed=15639000 task 5/8 online_acc=0.8614 elapsed=15.7s
+2026-10-09 21:06:50,042 INFO cpr_ipmnist seed=15639000 task 6/8 online_acc=0.8620 elapsed=17.8s
+2026-10-09 21:06:52,258 INFO cpr_ipmnist seed=15639000 task 7/8 online_acc=0.8538 elapsed=20.0s
+2026-10-09 21:06:54,519 INFO cpr_ipmnist seed=15639000 task 8/8 online_acc=0.8594 elapsed=22.3s
+Traceback (most recent call last):
+  File "<frozen runpy>", line 203, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/shaw/.codex/worktrees/finish-benchmark-issues/asi/alberta_framework/benchmarks/ipmnist_screening.py", line 12931, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/shaw/.codex/worktrees/finish-benchmark-issues/asi/alberta_framework/benchmarks/ipmnist_screening.py", line 12885, in main
+    if _screening_source_provenance() != source_provenance:
+       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/shaw/.codex/worktrees/finish-benchmark-issues/asi/alberta_framework/benchmarks/ipmnist_screening.py", line 9278, in _screening_source_provenance
+    raise RuntimeError(
+    ...<2 lines>...
+    )
+RuntimeError: screening source worktree is not clean: untracked Python/package source or source-scope file
