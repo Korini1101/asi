@@ -1,0 +1,68 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile:
+#1 transferring dockerfile: 1.63kB done
+#1 DONE 0.7s
+
+#2 [internal] load metadata for docker.io/library/python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c
+#2 DONE 1.4s
+
+#3 [internal] load .dockerignore
+#3 transferring context:
+#3 transferring context: 2B done
+#3 DONE 0.2s
+
+#4 [internal] load build context
+#4 DONE 0.0s
+
+#5 [ 1/10] FROM docker.io/library/python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c
+#5 resolve docker.io/library/python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c 0.1s done
+#5 DONE 0.1s
+
+#6 [ 2/10] ADD https://github.com/TTomilin/COOM/archive/7929801176c6e2e036c7c1c7dd6ce9b84a9d1f3e.tar.gz /tmp/coom.tar.gz
+#6 DONE 44.3s
+
+#4 [internal] load build context
+#4 transferring context:
+#4 transferring context: 55.55kB done
+#4 DONE 0.2s
+
+#7 [ 2/10] ADD https://github.com/TTomilin/COOM/archive/7929801176c6e2e036c7c1c7dd6ce9b84a9d1f3e.tar.gz /tmp/coom.tar.gz
+#7 CACHED
+
+#8 [ 3/10] RUN mkdir -p /opt/qualification
+#8 CACHED
+
+#9 [ 4/10] COPY requirements.lock /opt/qualification/requirements.lock
+#9 CACHED
+
+#10 [ 5/10] COPY coom-gymnasium.patch /opt/qualification/coom-gymnasium.patch
+#10 CACHED
+
+#11 [ 6/10] RUN printf '%s  %s\n' "a4736e9916468482d75831d53a12a8601c4da91cd40b9b24d313522034a15661" /tmp/coom.tar.gz | sha256sum --check --strict     && printf '%s  %s\n'        '25bc846908e573ff1c7d02909a9bb895570e0beafe1a928dbd0d5fd4b63835a7'        /opt/qualification/coom-gymnasium.patch | sha256sum --check --strict     && mkdir /opt/coom     && tar --extract --gzip --file /tmp/coom.tar.gz --directory /opt/coom --strip-components=1     && python -c "from pathlib import Path; p=Path('/opt/coom/COOM/wrappers/reward.py'); raw=p.read_text(); old='from gym import RewardWrapper'; assert raw.count(old) == 1; p.write_text(raw.replace(old, 'from gymnasium import RewardWrapper'))"     && python -m pip install --no-cache-dir --require-hashes        --requirement /opt/qualification/requirements.lock     && rm /tmp/coom.tar.gz
+#11 CACHED
+
+#12 [ 7/10] COPY Dockerfile /opt/qualification/Dockerfile.source
+#12 CACHED
+
+#13 [ 8/10] COPY qualification-manifest.json /opt/qualification/qualification-manifest.json
+#13 DONE 0.7s
+
+#14 [ 9/10] COPY smoke.py /opt/qualification/smoke.py
+#14 DONE 0.4s
+
+#15 [10/10] WORKDIR /opt/coom
+#15 DONE 0.5s
+
+#16 exporting to image
+#16 exporting layers
+#16 exporting layers 1.1s done
+#16 exporting manifest sha256:f07f51eba5f84f16935cd3bf8c0f1f87496553ea68423d5a4e02f526506e8c2c 0.0s done
+#16 exporting config sha256:4509c92874dcc9aa0ee07b1311e594b0df67baa124a3db205e510abdad8205ac 0.0s done
+#16 exporting attestation manifest sha256:6ff1c073d3b09cc6383ddc5a72f957e56748b60d36bcb50867963b565941290e 0.0s done
+#16 exporting manifest list sha256:119cd9a30e064a922275f9b09e9902cfa538c1a191d7cfa96275888627140837 0.0s done
+#16 naming to docker.io/library/asi-coom-qualification:issue-1582-20261009 done
+#16 unpacking to docker.io/library/asi-coom-qualification:issue-1582-20261009
+#16 unpacking to docker.io/library/asi-coom-qualification:issue-1582-20261009 0.1s done
+#16 DONE 1.3s
