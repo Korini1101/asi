@@ -1,0 +1,20 @@
+{
+  "arms": [
+    "cpr_off",
+    "cpr_ipmnist",
+    "cpr_utility_free",
+    "cpr_l2_init",
+    "cpr_hard_reset"
+  ],
+  "seeds": [
+    15639100,
+    15639101,
+    15639102,
+    15639103,
+    15639104
+  ],
+  "tasks": 8,
+  "steps_per_task": 5000,
+  "development_only": true,
+  "scientific_promotion_allowed": false
+}
