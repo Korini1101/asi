@@ -44,3 +44,13 @@ its bit-exact reduction pins are retained (lane precedent, negative
 results #19-#21). Ledger entry #23 records the closure. No retuning: a
 smaller step size or a boundary-reset variant is not licensed as a rescue
 of this round.
+
+## Historical validation limit
+
+The candidate arms were deregistered after this failed development gate.
+The current strict shard loader therefore rejects their names; it must not be
+weakened to accept them. The paired arithmetic above was recomputed directly
+from all 40 retained task curves. Strict historical revalidation requires the
+recorded generating source and runtime, which this arithmetic check does not
+replace. The recorded source digests are consistency metadata, not execution
+attestation.
