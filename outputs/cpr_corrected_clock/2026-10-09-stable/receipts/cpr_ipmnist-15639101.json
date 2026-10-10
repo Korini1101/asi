@@ -1,0 +1,85 @@
+{
+  "arm": "cpr_ipmnist",
+  "config": {
+    "hidden1": 300,
+    "hidden2": 150,
+    "input_dim": 784,
+    "n_classes": 10,
+    "n_tasks": 8,
+    "task_length": 5000
+  },
+  "hyperparameters": {
+    "l2_init_strength": 0.01,
+    "mode_code": 0.0,
+    "norm_decay": 0.99,
+    "norm_epsilon": 1e-08,
+    "reset_fraction": 0.01,
+    "reset_frequency": 100.0,
+    "step_size": 0.01,
+    "utility_decay": 0.99,
+    "utility_sharpness": 16.0
+  },
+  "matched_axes": [
+    "seed",
+    "example_schedule",
+    "observations",
+    "updates",
+    "allowed_boundary_information:none",
+    "peak_state_envelope"
+  ],
+  "metrics": {
+    "per_task_accuracy": [
+      0.83419997,
+      0.86539996,
+      0.8592,
+      0.8556,
+      0.86879998,
+      0.8506,
+      0.85359997,
+      0.86219996
+    ],
+    "per_task_loss": [
+      0.5626083,
+      0.44067377,
+      0.45855278,
+      0.45196649,
+      0.43417048,
+      0.47499472,
+      0.45544395,
+      0.45166445
+    ],
+    "per_task_plasticity": [
+      0.36881939,
+      0.38467908,
+      0.3926262,
+      0.38278452,
+      0.38087144,
+      0.38717204,
+      0.38620165,
+      0.39118624
+    ]
+  },
+  "policy": {
+    "development_only": true,
+    "publication_equivalent": false,
+    "retain_negative_outcome": true,
+    "scientific_promotion_allowed": false
+  },
+  "references": {
+    "official_code": "LucMc/continual-learning@6fc2af34783159f5dda50c6915dda32c2d443604",
+    "paper": "arXiv:2607.24996v1",
+    "protocol_difference": "batch-size-one IPMNIST; per-parameter rather than per-neuron gradient utility; retained initialization rather than fresh keyed draws; pulls all parameters rather than hidden incoming weights plus outgoing decay; no task-boundary information"
+  },
+  "resources": {
+    "environment_or_data_steps": 40000,
+    "model_queries": 80000,
+    "observations": 40000,
+    "peak_numeric_bytes": 3392200,
+    "persistent_bytes": 3392200,
+    "timing_is_selection_metric": false,
+    "timing_telemetry_seconds": 23.94,
+    "updates": 40000
+  },
+  "schema": "asi.ipmnist.calibrated_partial_reset.development.v1",
+  "seed": 15639101
+}

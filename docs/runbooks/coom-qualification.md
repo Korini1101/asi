@@ -99,3 +99,10 @@ benchmark or learner qualification.
   all negative outcomes; and
 - only then consider an agent adapter, development comparison, or fresh-seed
   scientific protocol. Nothing here supports a SOTA or robotics claim.
+
+## Retained runtime execution
+
+The [2026-10-09 qualification](../../outputs/coom_runtime_qualification/2026-10-09/README.md)
+retains the rebuilt image identity, two matching real-engine traces, source and
+asset bindings, and successful strict validation. This closes the fixed-action
+runtime slice; learning comparisons and paper-parity gates remain separate.

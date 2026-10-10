@@ -303,3 +303,12 @@ Genuinely new ASI-native protocol and artifact families should use versioned
 `asi.*` schema IDs and may add `asi-*` CLI aliases. A new version that extends a
 frozen Alberta-family schema retains its `alberta.*` lineage and compatible
 loader. New aliases are additive; historical IDs are never renamed.
+
+## October 2026 backlog review
+
+The [issue review](issue-review-2026-10.md) records completed native work and
+research umbrellas retired from the active queue. Closing an umbrella as not
+planned does not certify its external benchmark or erase existing local work.
+The roadmap keeps these directions available for a later concrete integration
+question; the immediate selection gate remains the matched reference-life
+scorecard.

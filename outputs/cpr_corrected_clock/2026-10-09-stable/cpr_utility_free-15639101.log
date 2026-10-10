@@ -1,0 +1,11 @@
+2026-10-09 21:15:08,515 INFO loading MNIST from data_home=/tmp/asi-issue-completion/openml-cache
+2026-10-09 21:15:11,878 INFO running cpr_utility_free seed=15639101 for 8 tasks x 5000 steps (noise_mode=step, noise_pool_steps=None, noise_gradual_steps=None)
+2026-10-09 21:15:16,873 INFO cpr_utility_free seed=15639101 task 1/8 online_acc=0.8338 elapsed=2.9s
+2026-10-09 21:15:18,177 INFO cpr_utility_free seed=15639101 task 2/8 online_acc=0.8670 elapsed=4.2s
+2026-10-09 21:15:19,331 INFO cpr_utility_free seed=15639101 task 3/8 online_acc=0.8576 elapsed=5.4s
+2026-10-09 21:15:20,492 INFO cpr_utility_free seed=15639101 task 4/8 online_acc=0.8614 elapsed=6.6s
+2026-10-09 21:15:21,629 INFO cpr_utility_free seed=15639101 task 5/8 online_acc=0.8712 elapsed=7.7s
+2026-10-09 21:15:22,907 INFO cpr_utility_free seed=15639101 task 6/8 online_acc=0.8588 elapsed=9.0s
+2026-10-09 21:15:24,645 INFO cpr_utility_free seed=15639101 task 7/8 online_acc=0.8638 elapsed=10.7s
+2026-10-09 21:15:26,455 INFO cpr_utility_free seed=15639101 task 8/8 online_acc=0.8646 elapsed=12.5s
+2026-10-09 21:15:27,868 INFO cpr_utility_free seed=15639101 done: avg online acc 0.8598 (wall 12.5s) -> /home/shaw/.codex/worktrees/finish-benchmark-issues/asi/outputs/cpr_corrected_clock/2026-10-09-stable/cpr_utility_free-15639101.json

@@ -471,3 +471,16 @@ hypothesis and separately recorded plan. Full parameters, sample standard
 deviations, paired deltas, source hashes, resource-accounting exclusions, and
 raw run logs are retained in the
 [development report](../../outputs/intentional_td_development_v1/REPORT.md).
+
+## Corrected-clock CPR development screen
+
+The five-arm, five-seed, eight-task corrected-clock screen does not select
+utility-weighted partial resets. CPR improves over mechanism-off but loses to
+both utility-free partial pulls and L2-to-initialization. Its frozen multi-control
+rule therefore returns inconclusive; improvement over off alone cannot rescue
+selection. This rejects advancing the tested configuration, not the paper's RL
+method. The exact paired values, resource receipts, source/data/runtime bindings,
+and excluded source-drift attempt are retained in
+[`cpr_corrected_clock/2026-10-09-stable/`](../../outputs/cpr_corrected_clock/2026-10-09-stable/README.md).
+Any new experiment needs a different causal hypothesis and retains those
+stronger controls; no reference configuration or scientific claim is promoted.

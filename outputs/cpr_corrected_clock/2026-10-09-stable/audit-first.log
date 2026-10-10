@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "/home/shaw/.codex/worktrees/finish-benchmark-issues/asi/outputs/cpr_corrected_clock/2026-10-09-stable/audit.py", line 12, in <module>
+    receipt=partial_reset_development_record(result)
+  File "/home/shaw/.codex/worktrees/finish-benchmark-issues/asi/alberta_framework/benchmarks/ipmnist_screening.py", line 10189, in partial_reset_development_record
+    raise TypeError("result must be an exact ScreeningRunResult")
+TypeError: result must be an exact ScreeningRunResult

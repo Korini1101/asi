@@ -1,0 +1,586 @@
+{
+  "confirmation_threshold": 0.005,
+  "control_name": "cpr_off",
+  "created_unix": 1791606240.450201,
+  "dataset_provenance": {
+    "materialization": "alberta.ipmnist.float32-neg1-pos1-int32-labels.v1",
+    "schema": "alberta.ipmnist_screening.dataset_provenance.v1",
+    "source": {
+      "name": "mnist_784",
+      "provider": "openml",
+      "row_start": 0,
+      "row_stop_exclusive": 60000,
+      "version": 1
+    },
+    "x": {
+      "dtype": "<f4",
+      "sha256": "b8078cd833f53d89828a5e28d728517be9add34076f13fe973399f1f16381313",
+      "shape": [
+        60000,
+        784
+      ]
+    },
+    "y": {
+      "dtype": "<i4",
+      "sha256": "4f1dd9551f104f8153409e0add59f0a71568f7bad5a5f8e2274480c186fe219a",
+      "shape": [
+        60000
+      ]
+    }
+  },
+  "environment": {
+    "jax": {
+      "backend": "cpu",
+      "config": {
+        "jax_default_matmul_precision": null,
+        "jax_default_prng_impl": "threefry2x32",
+        "jax_disable_jit": false,
+        "jax_enable_x64": false,
+        "jax_numpy_dtype_promotion": "standard",
+        "jax_numpy_rank_promotion": "allow",
+        "jax_random_seed_offset": 0,
+        "jax_threefry_partitionable": true
+      },
+      "devices": [
+        {
+          "device_kind": "cpu",
+          "id": 0,
+          "platform": "cpu",
+          "process_index": 0
+        }
+      ]
+    },
+    "packages": {
+      "chex": "0.1.92",
+      "jax": "0.11.1",
+      "jaxlib": "0.11.1",
+      "numpy": "2.5.2",
+      "scikit-learn": "1.9.0"
+    },
+    "platform": {
+      "machine": "x86_64",
+      "release": "7.2.3-arch1-3",
+      "system": "Linux"
+    },
+    "process_environment": {
+      "CUDA_VISIBLE_DEVICES": null,
+      "JAX_DEFAULT_MATMUL_PRECISION": null,
+      "JAX_ENABLE_X64": null,
+      "JAX_PLATFORMS": "cpu",
+      "JAX_PLATFORM_NAME": null,
+      "OMP_NUM_THREADS": "1",
+      "XLA_FLAGS": null
+    },
+    "python": {
+      "implementation": "CPython",
+      "version": "3.14.7"
+    },
+    "schema": "alberta.ipmnist_screening.runtime.v1"
+  },
+  "evidence_policy": {
+    "development_only": true,
+    "evidence_class": "development_screening_diagnostic",
+    "scientific_promotion_allowed": false
+  },
+  "n_shards": 25,
+  "noise_mode": "step",
+  "noise_pool_steps": null,
+  "protocol_config": {
+    "hidden1": 300,
+    "hidden2": 150,
+    "input_dim": 784,
+    "n_classes": 10,
+    "n_tasks": 8,
+    "task_length": 5000
+  },
+  "results": [
+    {
+      "average_online_accuracy_mean": 0.860694975,
+      "average_online_accuracy_stderr": 0.0012719926874313816,
+      "average_plasticity_mean": 0.40282576575,
+      "base_learner": "upgd_w",
+      "config_name": "cpr_utility_free",
+      "hyperparameters": {
+        "l2_init_strength": 0.01,
+        "mode_code": 3.0,
+        "norm_decay": 0.99,
+        "norm_epsilon": 1e-08,
+        "reset_fraction": 0.01,
+        "reset_frequency": 100.0,
+        "step_size": 0.01,
+        "utility_decay": 0.99,
+        "utility_sharpness": 16.0
+      },
+      "late_window_slope_mean": -0.00017999359999999916,
+      "n_seeds": 5,
+      "paired_vs_control": {
+        "all_seeds_improve": true,
+        "beats_control": true,
+        "confirmation_candidate": true,
+        "control": "cpr_off",
+        "mean_diff": 0.009594995749999956,
+        "per_seed_diff": [
+          0.0099,
+          0.01025,
+          0.0071,
+          0.0094,
+          0.011325
+        ],
+        "seeds": [
+          15639100,
+          15639101,
+          15639102,
+          15639103,
+          15639104
+        ],
+        "stderr_diff": 0.000699213731639717
+      },
+      "per_seed_average_online_accuracy": [
+        0.8608,
+        0.859775,
+        0.862825,
+        0.86365,
+        0.856425
+      ],
+      "per_seed_late_window_slope": [
+        0.00153999,
+        -0.00147999,
+        -0.00281999,
+        0.00166001,
+        0.00020001
+      ],
+      "seeds": [
+        15639100,
+        15639101,
+        15639102,
+        15639103,
+        15639104
+      ],
+      "wall_clock_seconds_total": 64.95
+    },
+    {
+      "average_online_accuracy_mean": 0.86023497925,
+      "average_online_accuracy_stderr": 0.001240049079424902,
+      "average_plasticity_mean": 0.40252637300000005,
+      "base_learner": "upgd_w",
+      "config_name": "cpr_l2_init",
+      "hyperparameters": {
+        "l2_init_strength": 0.01,
+        "mode_code": 2.0,
+        "norm_decay": 0.99,
+        "norm_epsilon": 1e-08,
+        "reset_fraction": 0.01,
+        "reset_frequency": 100.0,
+        "step_size": 0.01,
+        "utility_decay": 0.99,
+        "utility_sharpness": 16.0
+      },
+      "late_window_slope_mean": -0.0004919904000000041,
+      "n_seeds": 5,
+      "paired_vs_control": {
+        "all_seeds_improve": true,
+        "beats_control": true,
+        "confirmation_candidate": true,
+        "control": "cpr_off",
+        "mean_diff": 0.009134999999999982,
+        "per_seed_diff": [
+          0.01005,
+          0.010275,
+          0.006425,
+          0.00835,
+          0.010575
+        ],
+        "seeds": [
+          15639100,
+          15639101,
+          15639102,
+          15639103,
+          15639104
+        ],
+        "stderr_diff": 0.0007800886888687415
+      },
+      "per_seed_average_online_accuracy": [
+        0.86095,
+        0.8598,
+        0.86215,
+        0.8626,
+        0.855675
+      ],
+      "per_seed_late_window_slope": [
+        0.00132001,
+        -0.00164,
+        -0.00296,
+        0.00164001,
+        -0.00081998
+      ],
+      "seeds": [
+        15639100,
+        15639101,
+        15639102,
+        15639103,
+        15639104
+      ],
+      "wall_clock_seconds_total": 73.46
+    },
+    {
+      "average_online_accuracy_mean": 0.855854978,
+      "average_online_accuracy_stderr": 0.0013396931616986526,
+      "average_plasticity_mean": 0.38128906725,
+      "base_learner": "upgd_w",
+      "config_name": "cpr_ipmnist",
+      "hyperparameters": {
+        "l2_init_strength": 0.01,
+        "mode_code": 0.0,
+        "norm_decay": 0.99,
+        "norm_epsilon": 1e-08,
+        "reset_fraction": 0.01,
+        "reset_frequency": 100.0,
+        "step_size": 0.01,
+        "utility_decay": 0.99,
+        "utility_sharpness": 16.0
+      },
+      "late_window_slope_mean": -0.0011640053999999965,
+      "n_seeds": 5,
+      "paired_vs_control": {
+        "all_seeds_improve": true,
+        "beats_control": true,
+        "confirmation_candidate": false,
+        "control": "cpr_off",
+        "mean_diff": 0.004754998749999984,
+        "per_seed_diff": [
+          0.0054,
+          0.006675,
+          0.003225,
+          0.0027,
+          0.005775
+        ],
+        "seeds": [
+          15639100,
+          15639101,
+          15639102,
+          15639103,
+          15639104
+        ],
+        "stderr_diff": 0.0007650719941645891
+      },
+      "per_seed_average_online_accuracy": [
+        0.8563,
+        0.8562,
+        0.85895,
+        0.85695,
+        0.850875
+      ],
+      "per_seed_late_window_slope": [
+        0.00036001,
+        -0.00168001,
+        -0.00386001,
+        0.00165998,
+        -0.00230001
+      ],
+      "seeds": [
+        15639100,
+        15639101,
+        15639102,
+        15639103,
+        15639104
+      ],
+      "wall_clock_seconds_total": 91.92
+    },
+    {
+      "average_online_accuracy_mean": 0.8510999792500001,
+      "average_online_accuracy_stderr": 0.0018686056348937061,
+      "average_plasticity_mean": 0.38015286675,
+      "base_learner": "upgd_w",
+      "config_name": "cpr_off",
+      "hyperparameters": {
+        "l2_init_strength": 0.01,
+        "mode_code": 4.0,
+        "norm_decay": 0.99,
+        "norm_epsilon": 1e-08,
+        "reset_fraction": 0.01,
+        "reset_frequency": 100.0,
+        "step_size": 0.01,
+        "utility_decay": 0.99,
+        "utility_sharpness": 16.0
+      },
+      "late_window_slope_mean": -0.003464002199999991,
+      "n_seeds": 5,
+      "per_seed_average_online_accuracy": [
+        0.8509,
+        0.849525,
+        0.855725,
+        0.85425,
+        0.8451
+      ],
+      "per_seed_late_window_slope": [
+        -0.00293999,
+        -0.00164001,
+        -0.00487999,
+        -0.00176001,
+        -0.00610001
+      ],
+      "seeds": [
+        15639100,
+        15639101,
+        15639102,
+        15639103,
+        15639104
+      ],
+      "wall_clock_seconds_total": 66.92
+    },
+    {
+      "average_online_accuracy_mean": 0.84403997825,
+      "average_online_accuracy_stderr": 0.0014304191498916105,
+      "average_plasticity_mean": 0.41721003549999996,
+      "base_learner": "upgd_w",
+      "config_name": "cpr_hard_reset",
+      "hyperparameters": {
+        "l2_init_strength": 0.01,
+        "mode_code": 1.0,
+        "norm_decay": 0.99,
+        "norm_epsilon": 1e-08,
+        "reset_fraction": 0.01,
+        "reset_frequency": 100.0,
+        "step_size": 0.01,
+        "utility_decay": 0.99,
+        "utility_sharpness": 16.0
+      },
+      "late_window_slope_mean": -0.0018719888000000042,
+      "n_seeds": 5,
+      "paired_vs_control": {
+        "all_seeds_improve": false,
+        "beats_control": false,
+        "confirmation_candidate": false,
+        "control": "cpr_off",
+        "mean_diff": -0.007060000999999971,
+        "per_seed_diff": [
+          -0.00745,
+          -0.0045,
+          -0.008,
+          -0.009275,
+          -0.006075
+        ],
+        "seeds": [
+          15639100,
+          15639101,
+          15639102,
+          15639103,
+          15639104
+        ],
+        "stderr_diff": 0.0008205394460433902
+      },
+      "per_seed_average_online_accuracy": [
+        0.84345,
+        0.845025,
+        0.847725,
+        0.844975,
+        0.839025
+      ],
+      "per_seed_late_window_slope": [
+        -0.00061999,
+        -0.00167998,
+        -0.00327999,
+        -0.00102,
+        -0.00275999
+      ],
+      "seeds": [
+        15639100,
+        15639101,
+        15639102,
+        15639103,
+        15639104
+      ],
+      "wall_clock_seconds_total": 91.13
+    }
+  ],
+  "schema": "alberta.ipmnist_screening.summary.v2",
+  "shard_manifest": [
+    {
+      "config_name": "cpr_hard_reset",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_hard_reset-15639100.json",
+      "seed": 15639100,
+      "sha256": "57fe61c56699da86c752913f1f2e74f3289170de0c657a176ceb07473d9938e1",
+      "size_bytes": 3444
+    },
+    {
+      "config_name": "cpr_hard_reset",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_hard_reset-15639101.json",
+      "seed": 15639101,
+      "sha256": "fd700f2bfbbc872581b34bdc3e0cfee8598ac93fca7b8ae265e889ecb250adc9",
+      "size_bytes": 3438
+    },
+    {
+      "config_name": "cpr_hard_reset",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_hard_reset-15639102.json",
+      "seed": 15639102,
+      "sha256": "64352ca3ff04d757401d158eeb824252e7a9b24798b9a54391bfbea6c00f9afb",
+      "size_bytes": 3443
+    },
+    {
+      "config_name": "cpr_hard_reset",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_hard_reset-15639103.json",
+      "seed": 15639103,
+      "sha256": "a0e9f4fe9a2e09ee9b11a5c92a8a73a697d203650fb1164c1deba2fba77e5017",
+      "size_bytes": 3446
+    },
+    {
+      "config_name": "cpr_hard_reset",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_hard_reset-15639104.json",
+      "seed": 15639104,
+      "sha256": "da1a28a1b265e08e2996941f3cc21358285d1ccdd4a14e54d045e7ff01def0cd",
+      "size_bytes": 3451
+    },
+    {
+      "config_name": "cpr_ipmnist",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_ipmnist-15639100.json",
+      "seed": 15639100,
+      "sha256": "dd12a8888fa5007099a8fd3b2796e2b5e38aed0b1ebc2945ca2802d33c984986",
+      "size_bytes": 3440
+    },
+    {
+      "config_name": "cpr_ipmnist",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_ipmnist-15639101.json",
+      "seed": 15639101,
+      "sha256": "a010580e3ae9c8b656762aa47058a0a8da7e7290258a1c9c830677f2938b679d",
+      "size_bytes": 3437
+    },
+    {
+      "config_name": "cpr_ipmnist",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_ipmnist-15639102.json",
+      "seed": 15639102,
+      "sha256": "40f25bb19de9a0a5c044018715a98a561c0c81d5fc458198e40c4e83f1bd226a",
+      "size_bytes": 3437
+    },
+    {
+      "config_name": "cpr_ipmnist",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_ipmnist-15639103.json",
+      "seed": 15639103,
+      "sha256": "760caf7d25ebabb249144274779b2880ed7abb1359441de855b904eb4a984674",
+      "size_bytes": 3441
+    },
+    {
+      "config_name": "cpr_ipmnist",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_ipmnist-15639104.json",
+      "seed": 15639104,
+      "sha256": "8261c4b889a4ee4a819c3bc0cb8f2cc0be982878807d737a86dc6b8f1836f53c",
+      "size_bytes": 3451
+    },
+    {
+      "config_name": "cpr_l2_init",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_l2_init-15639100.json",
+      "seed": 15639100,
+      "sha256": "ed2a04e16103884f082ea7ca33f78981462abb5605cea11525cd494de32c018d",
+      "size_bytes": 3447
+    },
+    {
+      "config_name": "cpr_l2_init",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_l2_init-15639101.json",
+      "seed": 15639101,
+      "sha256": "02e7ef1f1583755c9d92dc5c3305d5c905d61c1e101fd1cb8d95b7d9da496679",
+      "size_bytes": 3446
+    },
+    {
+      "config_name": "cpr_l2_init",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_l2_init-15639102.json",
+      "seed": 15639102,
+      "sha256": "47807c9feaf070444ce6a454ae7c10b45aea2745fc26af802982303f17f40a3d",
+      "size_bytes": 3433
+    },
+    {
+      "config_name": "cpr_l2_init",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_l2_init-15639103.json",
+      "seed": 15639103,
+      "sha256": "df39a1032b6fda3b03435add84e9336b76b8f1032b52f86ba1b1bf6ce8984ec1",
+      "size_bytes": 3439
+    },
+    {
+      "config_name": "cpr_l2_init",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_l2_init-15639104.json",
+      "seed": 15639104,
+      "sha256": "3520c5cd64f1f913e2055357712db60134310a86f54aa0089f1b3f4f860153c3",
+      "size_bytes": 3442
+    },
+    {
+      "config_name": "cpr_off",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_off-15639100.json",
+      "seed": 15639100,
+      "sha256": "59ae052edbbb897f9c2047aabf4f693ed5892ec72341d6ce72403608f1a95c6a",
+      "size_bytes": 3440
+    },
+    {
+      "config_name": "cpr_off",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_off-15639101.json",
+      "seed": 15639101,
+      "sha256": "50bda26d65eeb722519bcc5c3431730ded0abbdeb10adf4750a8da8ee187b8bd",
+      "size_bytes": 3435
+    },
+    {
+      "config_name": "cpr_off",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_off-15639102.json",
+      "seed": 15639102,
+      "sha256": "c075ab17049663e524267eb6e50a5107b2eea6b18107acc1e298e44909511c01",
+      "size_bytes": 3442
+    },
+    {
+      "config_name": "cpr_off",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_off-15639103.json",
+      "seed": 15639103,
+      "sha256": "0893db253f86594be04bdf1a967f9f0b712f30dcc54c5ea54cf0e00c32bf4ae6",
+      "size_bytes": 3447
+    },
+    {
+      "config_name": "cpr_off",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_off-15639104.json",
+      "seed": 15639104,
+      "sha256": "7b3752308800400d82ca392389e83dbaf539ca44c138e2be2a503c9fef8e1d96",
+      "size_bytes": 3438
+    },
+    {
+      "config_name": "cpr_utility_free",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_utility_free-15639100.json",
+      "seed": 15639100,
+      "sha256": "6792a1050d374058be66cda042e2b007eb1a07a98f0c377140358d2a5cf60279",
+      "size_bytes": 3449
+    },
+    {
+      "config_name": "cpr_utility_free",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_utility_free-15639101.json",
+      "seed": 15639101,
+      "sha256": "07dac2de458b2ad268228004554aa48b605b633a071c032356209b0561a8c640",
+      "size_bytes": 3452
+    },
+    {
+      "config_name": "cpr_utility_free",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_utility_free-15639102.json",
+      "seed": 15639102,
+      "sha256": "47d5af903e8573d28dbbe3e54ae0c47660ebf9316a4289c22a8a67b41762d118",
+      "size_bytes": 3451
+    },
+    {
+      "config_name": "cpr_utility_free",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_utility_free-15639103.json",
+      "seed": 15639103,
+      "sha256": "4175f44a8391b9099d0ae2bb9880fbe698676f36d1f1a65f01abec7f7fca73df",
+      "size_bytes": 3438
+    },
+    {
+      "config_name": "cpr_utility_free",
+      "path": "outputs/cpr_corrected_clock/2026-10-09-stable/cpr_utility_free-15639104.json",
+      "seed": 15639104,
+      "sha256": "ec9739afe6f082e4d502730c1e74ae4ad5d28b2c57c1af55b8312b191b999f0d",
+      "size_bytes": 3455
+    }
+  ],
+  "slope_window": 4,
+  "source_provenance": {
+    "git_commit": "dac2bcebbe24cde3c22b74ea0eac7b762aa76e12",
+    "git_object_format": "sha1",
+    "git_tree": "223be24fbce1b717706e570e4aa416997ddb67cd",
+    "relevant_source_file_count": 230,
+    "relevant_source_scope": "tracked:alberta_framework/**,pyproject.toml,uv.lock",
+    "relevant_source_sha256": "9967df09bb9233a6ea64766ebe500a47e1bed3048ff89b500d228406b9142bc8",
+    "schema": "alberta.ipmnist_screening.source_provenance.v1",
+    "uv_lock_sha256": "0fc52a642ba70bd64bfa80049b1efc99c35829d01e44705370994ad818ee82d7",
+    "worktree_clean": true
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "arm": "cpr_utility_free",
+  "seed": 15639102,
+  "status": 0,
+  "wall_seconds_telemetry": 26.000808302000223,
+  "cpu_affinity": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "command": [
+    "/home/shaw/.codex/worktrees/finish-benchmark-issues/asi/.venv/bin/python",
+    "-m",
+    "alberta_framework.benchmarks.ipmnist_screening",
+    "run",
+    "--config-name",
+    "cpr_utility_free",
+    "--seed",
+    "15639102",
+    "--n-tasks",
+    "8",
+    "--task-length",
+    "5000",
+    "--data-home",
+    "/tmp/asi-issue-completion/openml-cache",
+    "--out",
+    "/home/shaw/.codex/worktrees/finish-benchmark-issues/asi/outputs/cpr_corrected_clock/2026-10-09-stable/cpr_utility_free-15639102.json",
+    "--progress-every",
+    "1"
+  ]
+}
