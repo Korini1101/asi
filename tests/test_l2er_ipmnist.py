@@ -404,6 +404,7 @@ def test_protocol_pins_sources_and_records_material_differences() -> None:
         "counts arm-specific auxiliary ER steps; total_optimizer_updates is their exact sum"
     )
     assert L2ER_PROTOCOL["development_only"] is True
+    assert L2ER_PROTOCOL["scientific_promotion_allowed"] is False
 
 
 def test_result_receipt_carries_exact_correct_counts_from_float32_task_means() -> None:
