@@ -36,7 +36,9 @@ registered gated parent `rls_head_resid_identmap50_r` (retained
 200-task confirmation shards' 60-task prefix in `smprecond_confirm_r1/`),
 the gated idet003 peak (retained `wave_identmap50_r_idet003/` shards
 from PR #3115's screen, fetched from that PR's branch — not committed
-here), and the pinned `upgd_w_control` shards.
+here; identified by the per-shard `sha256` values in that wave's
+`summary.json` — candidate shards `08ae9801…`, `d475a0c3…`,
+`236da7f2…`), and the pinned `upgd_w_control` shards.
 
 Runner-version note: 3-task parent shards rerun on this commit
 (`repro_parent_seed{0,1,2}_3task.json`) are **value-identical to the
@@ -73,9 +75,9 @@ Mean online accuracy (60 tasks):
   (+0.00510 over its s0075 parent, PR #3111). The gated chain takes
   the step-size axis too.
 - The candidate's per-seed spread stays collapsed (per-seed stderr
-  0.00014 vs the gated parent's 0.00732), continuing the equalization
-  signature: the gated chain is now measured at 0.93469 mean with
-  20x smaller seed variance than its confirmed parent.
+  0.00014 vs the gated parent's 0.00732 — about 52x smaller stderr,
+  about 2700x smaller seed variance), continuing the equalization
+  signature: the gated chain is now measured at 0.93469 mean.
 - This is the gated chain's best measured result (vs identmap50_r
   0.9166 confirmed / 0.91142 60-task prefix, idet003 0.92633, idet002
   0.92387). The ungated s005625 chain remains higher on this screen
