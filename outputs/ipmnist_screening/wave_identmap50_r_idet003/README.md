@@ -38,14 +38,15 @@ paired differences below are computed directly from the shards'
 waves used.
 
 Runner-version note: 3-task parent shards rerun on this commit
-(`repro_parent_seed{0,1,2}_3task.json`) match the retained parent
-shards to within ±0.0002 per task (cross-version float reassociation,
-the documented within-runner version drift class); task 0 of the
+(`repro_parent_seed{0,1,2}_3task.json`) drift from the retained parent
+shards by up to 0.001 per task (seed 1, task 2; cross-version float
+reassociation, the documented within-runner version drift class —
+task 0 stays within ±0.0002); task 0 of the
 candidate is bitwise identical to the same-runner parent on all three
 seeds (0.73219997, 0.74619997, 0.7518), as the mechanism requires —
 before the first detected boundary the trigger change does nothing.
-The paired table below therefore carries a ±0.0002 version offset,
-two orders below the measured effect.
+The paired table below therefore carries a ≤0.001 version offset,
+an order below the measured effect.
 
 ## Results
 
@@ -62,7 +63,7 @@ Mean online accuracy (60 tasks):
   stderr 0.00739; the stderr is large only because seed 1's parent was
   the weak seed — the trigger gains +0.0294 exactly there).
 - The candidate's per-seed spread collapses (per-seed stderr 0.00009 vs
-  the parent's 0.01042): the same equalization signature as the ungated
+  the parent's 0.00732): the same equalization signature as the ungated
   idet003 screen, consistent with boundaries the 0.05 trigger missed now
   firing a remap.
 - The trigger effect is **gate-independent at this resolution**: +0.01490
