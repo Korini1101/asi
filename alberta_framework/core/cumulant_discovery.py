@@ -335,7 +335,7 @@ class CumulantDiscovery:
         )
         norms = jnp.linalg.norm(raw_proj, axis=1, keepdims=True) + 1e-8
         projections = raw_proj / norms
-        return CumulantDiscoveryState(
+        return CumulantDiscoveryState(  # type: ignore[call-arg]
             projections=projections,
             weights=jnp.zeros(
                 (self._n_candidates, self._raw_dim), dtype=jnp.float32
@@ -412,7 +412,7 @@ class CumulantDiscovery:
         proposed_weights = state.weights + alpha * td[:, None] * observation[None, :]
         proposed_biases = state.biases + alpha * td
         proposed_utility = decay * state.utility + (1.0 - decay) * (td**2)
-        proposed_state = CumulantDiscoveryState(
+        proposed_state = CumulantDiscoveryState(  # type: ignore[call-arg]
             projections=state.projections,
             weights=proposed_weights,
             biases=proposed_biases,
@@ -472,8 +472,15 @@ class CumulantDiscovery:
         safe_debias = jnp.maximum(debias, jnp.asarray(1e-30, dtype=jnp.float32))
         ranking_utility = state.utility / safe_debias
         # A common scale preserves ranking when finite utilities overflow on debiasing.
-        utility_scale = jnp.maximum(jnp.max(state.utility), 1.0)
-        scaled_ranking = (state.utility / utility_scale) / safe_debias
+        eligible_finite = mature & jnp.isfinite(state.utility)
+        utility_scale = jnp.max(jnp.where(eligible_finite, jnp.abs(state.utility), 0.0))
+        safe_scale = jnp.where(utility_scale > 0.0, utility_scale, 1.0)
+        _, scale_exponent = jnp.frexp(safe_scale)
+        scaled_ranking = _bias_corrected_utility(
+            jnp.ldexp(state.utility, -scale_exponent),
+            state.ages,
+            self._decay_rate,
+        )
         ranking_utility = jnp.where(
             jnp.any(mature & jnp.isfinite(ranking_utility)), ranking_utility, scaled_ranking
         )
@@ -518,7 +525,7 @@ class CumulantDiscovery:
             state.ages,
         )
 
-        candidate = CumulantDiscoveryState(
+        candidate = CumulantDiscoveryState(  # type: ignore[call-arg]
             projections=new_projections,
             weights=new_weights,
             biases=new_biases,
