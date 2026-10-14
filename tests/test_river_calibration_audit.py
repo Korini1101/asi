@@ -41,3 +41,37 @@ def test_load_records_rejects_missing_source_identity(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="invalid source identity"):
         audit.load_records(run=tmp_path, arms=("random",), seeds=(1,))
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_reproduction_verifies_retained_reports_without_writing() -> None:
+    audit = _audit_module()
+    before = (_sha256(audit.RETAINED_ANALYSIS), _sha256(audit.RETAINED_README))
+    result = audit.verify_retained()
+    after = (_sha256(audit.RETAINED_ANALYSIS), _sha256(audit.RETAINED_README))
+    assert result["plan_sha256"] == audit.EXPECTED_PLAN_SHA256
+    assert before == after
+
+
+def test_write_output_refuses_occupied_and_retained_destinations(tmp_path: Path) -> None:
+    audit = _audit_module()
+    occupied = tmp_path / "occupied"
+    occupied.mkdir()
+    (occupied / "analysis.json").write_text("{}")
+    with pytest.raises(FileExistsError, match="refusing to replace"):
+        audit.write_output(occupied)
+    with pytest.raises(ValueError, match="refusing to overwrite the retained"):
+        audit.write_output(audit.OUT)
+
+
+def test_write_output_to_fresh_dir_matches_retained(tmp_path: Path) -> None:
+    audit = _audit_module()
+    fresh = tmp_path / "fresh"
+    audit.write_output(fresh)
+    assert (fresh / "analysis.json").read_bytes() == audit.RETAINED_ANALYSIS.read_bytes()
+    assert (fresh / "README.md").read_bytes() == audit.RETAINED_README.read_bytes()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import math
@@ -9,10 +10,11 @@ import statistics
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[3]
 RUN = ROOT / "outputs/reference_life_scorecard_development/run2-2026-10-09"
 OUT = Path(__file__).resolve().parent
+RETAINED_ANALYSIS = OUT / "analysis.json"
+RETAINED_README = OUT / "README.md"
 ARMS = (
     "random",
     "sarsa",
@@ -40,7 +42,7 @@ def load_records(
     for arm in arms:
         for seed in seeds:
             path = run / "shards" / f"riverswim__{arm}__{seed}.json"
-            payload = json.loads(path.read_text())
+            payload = json.loads(path.read_text(encoding="utf-8"))
             if payload.get("schema") != "asi.reference_life_scorecard.run.v1":
                 raise ValueError(f"unexpected shard schema: {path}")
             if payload.get("status") != "completed" or payload.get("failure") is not None:
@@ -218,11 +220,65 @@ def render_markdown(result: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    """Recompute the audit and verify the retained reports without rewriting them.
+
+    Default mode recomputes from the retained shards and compares against the
+    retained ``analysis.json``/``README.md`` bytes, writing nothing. Pass
+    ``--write --out <new dir>`` to publish the same bytes to a fresh
+    directory; occupied destinations and the retained directory itself are
+    refused.
+    """
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--write", action="store_true", help="publish to --out instead of verifying"
+    )
+    parser.add_argument("--out", type=Path, default=None, help="fresh output directory for --write")
+    args = parser.parse_args(argv)
+    if args.write:
+        if args.out is None:
+            raise ValueError("--write requires --out <new directory>")
+        write_output(args.out)
+        print(args.out / "README.md")
+        return
+    if args.out is not None:
+        raise ValueError("--out requires --write")
+    verify_retained()
+    print(f"{RETAINED_README} verified")
+
+
+def render_json(result: dict[str, Any]) -> str:
+    return json.dumps(result, indent=2, sort_keys=True) + "\n"
+
+
+def verify_retained() -> dict[str, Any]:
+    """Recompute and compare against retained reports without writing."""
+
     result = summarize(load_records())
-    (OUT / "analysis.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
-    (OUT / "README.md").write_text(render_markdown(result))
-    print(OUT / "README.md")
+    expected_json = render_json(result)
+    expected_markdown = render_markdown(result)
+    if RETAINED_ANALYSIS.read_text(encoding="utf-8") != expected_json:
+        raise ValueError("recomputed analysis.json differs from the retained report")
+    if RETAINED_README.read_text(encoding="utf-8") != expected_markdown:
+        raise ValueError("recomputed README.md differs from the retained report")
+    return result
+
+
+def write_output(out_dir: Path) -> Path:
+    """Publish recomputed reports to a fresh directory, never the retained one."""
+
+    if out_dir.resolve() == OUT.resolve():
+        raise ValueError("refusing to overwrite the retained audit directory")
+    analysis_path = out_dir / "analysis.json"
+    readme_path = out_dir / "README.md"
+    if analysis_path.exists() or readme_path.exists():
+        raise FileExistsError(f"refusing to replace existing outputs in {out_dir}")
+    result = summarize(load_records())
+    out_dir.mkdir(parents=True, exist_ok=True)
+    analysis_path.write_text(render_json(result), encoding="utf-8")
+    readme_path.write_text(render_markdown(result), encoding="utf-8")
+    return out_dir
 
 
 if __name__ == "__main__":
