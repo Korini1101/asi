@@ -476,11 +476,7 @@ class CumulantDiscovery:
         utility_scale = jnp.max(jnp.where(eligible_finite, jnp.abs(state.utility), 0.0))
         safe_scale = jnp.where(utility_scale > 0.0, utility_scale, 1.0)
         _, scale_exponent = jnp.frexp(safe_scale)
-        scaled_ranking = _bias_corrected_utility(
-            jnp.ldexp(state.utility, -scale_exponent),
-            state.ages,
-            self._decay_rate,
-        )
+        scaled_ranking = jnp.ldexp(state.utility, -scale_exponent) / safe_debias
         ranking_utility = jnp.where(
             jnp.any(mature & jnp.isfinite(ranking_utility)), ranking_utility, scaled_ranking
         )
