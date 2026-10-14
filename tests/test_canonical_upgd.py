@@ -1301,12 +1301,13 @@ def test_saturated_gate_accepts_finite_inputs_with_overflowing_direction() -> No
 
 
 @pytest.mark.parametrize("disable_jit", [True, False])
+@pytest.mark.parametrize("magnitude", [2e19, 1e38])
 def test_local_normalization_keeps_finite_utility_rows_with_overflowing_norms(
-    disable_jit: bool,
+    disable_jit: bool, magnitude: float,
 ) -> None:
     optimizer = CanonicalUPGD(CanonicalUPGDConfig(normalization="local", noise_std=0.0))
     params = {"w": jnp.ones((1, 2), dtype=jnp.float32)}
-    gradients = {"w": jnp.full((1, 2), -2e19, dtype=jnp.float32)}
+    gradients = {"w": jnp.full((1, 2), -magnitude, dtype=jnp.float32)}
     with jax.disable_jit(disable_jit):
         result = optimizer.update(optimizer.init(params), params, gradients, jr.key(0))
     expected = jax.nn.sigmoid(jnp.asarray(2.0**-0.5, dtype=jnp.float32))
