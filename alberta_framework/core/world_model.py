@@ -1128,12 +1128,15 @@ def run_action_conditioned_world_model_learning_loop(
         state,
         (observations, actions, rewards, discounts, next_observations),
     )
-    final_state = dataclasses.replace(
-        final_state,
-        learner_state=dataclasses.replace(
-            final_state.learner_state,
-            birth_timestamp=state.learner_state.birth_timestamp,
-            uptime_s=state.learner_state.uptime_s,
+    final_state = cast(
+        ActionConditionedWorldModelState,
+        dataclasses.replace(
+            cast(Any, final_state),
+            learner_state=dataclasses.replace(
+                cast(Any, final_state.learner_state),
+                birth_timestamp=state.learner_state.birth_timestamp,
+                uptime_s=state.learner_state.uptime_s,
+            ),
         ),
     )
     return ActionConditionedWorldModelLearningResult(
