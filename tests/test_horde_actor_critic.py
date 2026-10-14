@@ -2238,3 +2238,20 @@ def test_actor_gradient_clip_bounds_finite_gradients_with_overflowing_norms(
     np.testing.assert_allclose(clipped[0][0], [[0.6, 0.0]], rtol=1e-5)
     np.testing.assert_allclose(clipped[2], [[0.8]], rtol=1e-5)
     assert not np.any(np.asarray(overflowing[2]))
+
+
+@pytest.mark.parametrize("disable_jit", [True, False])
+def test_actor_gradient_clip_recovers_near_float32_max_norm(
+    disable_jit: bool,
+) -> None:
+    from alberta_framework.core.horde_actor_critic import _clip_nlhac_actor_grads
+
+    trunk_w = (jnp.array([[1e38, 0.0]], dtype=jnp.float32),)
+    trunk_b = (jnp.zeros(1, dtype=jnp.float32),)
+    head_w = jnp.zeros((1, 1), dtype=jnp.float32)
+    head_b = jnp.zeros(1, dtype=jnp.float32)
+    with jax.disable_jit(disable_jit):
+        clipped = jax.jit(_clip_nlhac_actor_grads, static_argnums=4)(
+            trunk_w, trunk_b, head_w, head_b, 1.0
+        )
+    np.testing.assert_allclose(clipped[0][0], [[1.0, 0.0]], rtol=1e-5)

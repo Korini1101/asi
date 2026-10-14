@@ -1410,9 +1410,17 @@ def _clip_nlhac_actor_grads(
     finite = jnp.all(jnp.stack([jnp.all(jnp.isfinite(grad)) for grad in grads]))
     largest = jnp.max(jnp.stack([jnp.max(jnp.abs(grad), initial=0.0) for grad in grads]))
     safe_largest = jnp.where(largest > 0.0, largest, 1.0)
-    rescaled = jnp.sum(jnp.stack([jnp.sum(jnp.square(grad / safe_largest)) for grad in grads]))
+    _, scale_exponent = jnp.frexp(safe_largest)
+    rescaled = jnp.sum(
+        jnp.stack(
+            [
+                jnp.sum(jnp.square(jnp.ldexp(grad, -scale_exponent)))
+                for grad in grads
+            ]
+        )
+    )
     recover = jnp.isinf(norm) & finite
-    norm = jnp.where(recover, safe_largest * jnp.sqrt(rescaled), norm)
+    norm = jnp.where(recover, jnp.ldexp(jnp.sqrt(rescaled), scale_exponent), norm)
     scale = jnp.minimum(1.0, jnp.asarray(max_norm, dtype=jnp.float32) / (norm + 1e-8))
     return (
         tuple(scale * grad for grad in grad_trunk_w),
