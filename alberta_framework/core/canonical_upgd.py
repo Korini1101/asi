@@ -529,7 +529,12 @@ def _local_normalize(
             denominator = jnp.maximum(denominator, epsilon)
         normalized = numerator / denominator
         scaled_numerator = jnp.ldexp(numerator, -scale_exponent)
-        scaled_normalized = scaled_numerator / scaled_denominator
+        # Gate both division operands before the outer where: jnp.where hides
+        # the unselected forward value but JAX still backprops through it, so
+        # an all-zero row would otherwise produce 0/0 -> NaN gradients.
+        safe_scaled_denominator = jnp.where(overflow_recovery, scaled_denominator, 1.0)
+        safe_scaled_numerator = jnp.where(overflow_recovery, scaled_numerator, 0.0)
+        scaled_normalized = safe_scaled_numerator / safe_scaled_denominator
         normalized = jnp.where(overflow_recovery, scaled_normalized, normalized)
     return jnp.where(active, normalized, 0.0)
 
