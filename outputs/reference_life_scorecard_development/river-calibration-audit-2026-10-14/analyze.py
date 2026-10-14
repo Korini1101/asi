@@ -30,12 +30,16 @@ def canonical_sha256(value: Any) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
-def load_records() -> dict[str, dict[int, dict[str, Any]]]:
-    records: dict[str, dict[int, dict[str, Any]]] = {arm: {} for arm in ARMS}
+def load_records(
+    run: Path = RUN,
+    arms: tuple[str, ...] = ARMS,
+    seeds: tuple[int, ...] = SEEDS,
+) -> dict[str, dict[int, dict[str, Any]]]:
+    records: dict[str, dict[int, dict[str, Any]]] = {arm: {} for arm in arms}
     source_digests: set[str] = set()
-    for arm in ARMS:
-        for seed in SEEDS:
-            path = RUN / "shards" / f"riverswim__{arm}__{seed}.json"
+    for arm in arms:
+        for seed in seeds:
+            path = run / "shards" / f"riverswim__{arm}__{seed}.json"
             payload = json.loads(path.read_text())
             if payload.get("schema") != "asi.reference_life_scorecard.run.v1":
                 raise ValueError(f"unexpected shard schema: {path}")
@@ -52,7 +56,14 @@ def load_records() -> dict[str, dict[int, dict[str, Any]]]:
             outcome = payload.get("outcome")
             if not isinstance(outcome, dict) or outcome.get("accepted_events") != 20000:
                 raise ValueError(f"invalid outcome: {path}")
-            source_digests.add(canonical_sha256(payload.get("source_identity")))
+            source_identity = payload.get("source_identity")
+            if (
+                type(source_identity) is not dict
+                or type(source_identity.get("files")) is not dict
+                or not source_identity["files"]
+            ):
+                raise ValueError(f"invalid source identity: {path}")
+            source_digests.add(canonical_sha256(source_identity))
             records[arm][seed] = outcome
     if len(source_digests) != 1:
         raise ValueError("source identities differ across audited shards")
