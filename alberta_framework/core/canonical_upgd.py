@@ -504,6 +504,9 @@ def _local_normalize(
     active_denominator = jnp.where(active, denominator_utility, 0.0)
     if numerator.ndim == 0:
         denominator = jnp.abs(active_denominator)
+        if epsilon is not None:
+            denominator = jnp.maximum(denominator, epsilon)
+        normalized = numerator / denominator
     else:
         denominator = jnp.linalg.norm(
             active_denominator,
@@ -514,21 +517,20 @@ def _local_normalize(
         scale = jnp.max(jnp.abs(active_denominator), axis=-1, keepdims=True)
         safe_scale = jnp.where(scale > 0.0, scale, 1.0)
         _, scale_exponent = jnp.frexp(safe_scale)
-        scaled_norm = jnp.ldexp(
-            jnp.linalg.norm(
-                jnp.ldexp(active_denominator, -scale_exponent),
-                axis=-1,
-                keepdims=True,
-            ),
-            scale_exponent,
+        scaled_denominator = jnp.linalg.norm(
+            jnp.ldexp(active_denominator, -scale_exponent),
+            axis=-1,
+            keepdims=True,
         )
-        recover = jnp.isinf(denominator) & jnp.all(
+        overflow_recovery = jnp.isinf(denominator) & jnp.all(
             jnp.isfinite(active_denominator), axis=-1, keepdims=True
         )
-        denominator = jnp.where(recover, scaled_norm, denominator)
-    if epsilon is not None:
-        denominator = jnp.maximum(denominator, epsilon)
-    normalized = numerator / denominator
+        if epsilon is not None:
+            denominator = jnp.maximum(denominator, epsilon)
+        normalized = numerator / denominator
+        scaled_numerator = jnp.ldexp(numerator, -scale_exponent)
+        scaled_normalized = scaled_numerator / scaled_denominator
+        normalized = jnp.where(overflow_recovery, scaled_normalized, normalized)
     return jnp.where(active, normalized, 0.0)
 
 
