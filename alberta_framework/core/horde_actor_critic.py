@@ -1420,13 +1420,36 @@ def _clip_nlhac_actor_grads(
         )
     )
     recover = jnp.isinf(norm) & finite
-    norm = jnp.where(recover, jnp.ldexp(jnp.sqrt(rescaled), scale_exponent), norm)
+    scaled_norm = jnp.sqrt(rescaled)
     scale = jnp.minimum(1.0, jnp.asarray(max_norm, dtype=jnp.float32) / (norm + 1e-8))
+    scaled_scale = jnp.asarray(max_norm, dtype=jnp.float32) / (scaled_norm + 1e-8)
     return (
-        tuple(scale * grad for grad in grad_trunk_w),
-        tuple(scale * grad for grad in grad_trunk_b),
-        scale * grad_head_w,
-        scale * grad_head_b,
+        tuple(
+            jnp.where(
+                recover,
+                scaled_scale * jnp.ldexp(grad, -scale_exponent),
+                scale * grad,
+            )
+            for grad in grad_trunk_w
+        ),
+        tuple(
+            jnp.where(
+                recover,
+                scaled_scale * jnp.ldexp(grad, -scale_exponent),
+                scale * grad,
+            )
+            for grad in grad_trunk_b
+        ),
+        jnp.where(
+            recover,
+            scaled_scale * jnp.ldexp(grad_head_w, -scale_exponent),
+            scale * grad_head_w,
+        ),
+        jnp.where(
+            recover,
+            scaled_scale * jnp.ldexp(grad_head_b, -scale_exponent),
+            scale * grad_head_b,
+        ),
     )
 
 
