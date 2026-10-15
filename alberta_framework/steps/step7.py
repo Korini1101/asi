@@ -48,7 +48,7 @@ References:
 from __future__ import annotations
 
 import time
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field
 from fractions import Fraction
 from numbers import Integral
 from typing import Any, Literal, cast
@@ -1357,12 +1357,9 @@ def run_step7_scan(
     ) = jax.lax.scan(scan_step, state, (rewards, next_observations))
     elapsed = time.time() - t0
     # Preserve the model's host-only lifecycle clocks at the batch boundary.
-    final_state = replace(
-        final_state,
-        world_model_state=replace(
-            final_state.world_model_state,
-            learner_state=replace(
-                final_state.world_model_state.learner_state,
+    final_state = final_state.replace(  # type: ignore[attr-defined]
+        world_model_state=final_state.world_model_state.replace(  # type: ignore[attr-defined]
+            learner_state=final_state.world_model_state.learner_state.replace(  # type: ignore[attr-defined]
                 birth_timestamp=state.world_model_state.learner_state.birth_timestamp,
                 uptime_s=state.world_model_state.learner_state.uptime_s + elapsed,
             ),
