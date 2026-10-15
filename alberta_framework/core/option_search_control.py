@@ -384,6 +384,22 @@ def _all_integer_leaves_nonnegative(value: Any) -> Bool[Array, ""]:
     return valid
 
 
+def _float32_model_delta(weights: Array, observation: Array) -> Array:
+    """Return one next-state row as a scaled float32 product sum.
+
+    JIT rewrites ``weights @ observation`` into a GEMV. That GEMV turns an
+    exact cancelling pair of large finite products into a huge finite delta
+    and changes the selected option. Dividing by the largest product keeps
+    the sum at the real row, including exact zero.
+    """
+
+    products = weights * observation
+    max_abs = jnp.max(jnp.abs(products), axis=-1, keepdims=True)
+    scale = jnp.where(max_abs > 0.0, max_abs, jnp.ones_like(max_abs))
+    scaled_sum = jnp.sum(products / scale, axis=-1)
+    return scaled_sum * jnp.reshape(scale, (-1,))
+
+
 def _array_has_contract(
     value: Any,
     shape: tuple[int, ...],
@@ -739,7 +755,7 @@ class OptionSearchControl:
                 models.next_state_weights[index],
                 jnp.zeros_like(models.next_state_weights[index]),
             )
-            predicted_next = observation + weights @ observation
+            predicted_next = observation + _float32_model_delta(weights, observation)
             next_values = self._agent.base_learner.predict(
                 learner_state,
                 predicted_next,

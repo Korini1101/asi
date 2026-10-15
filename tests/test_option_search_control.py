@@ -215,6 +215,70 @@ def test_zero_discount_does_not_multiply_overflowed_next_values() -> None:
     assert int(diagnostics.selected_option_indices[0]) == 1
 
 
+def test_cancelling_finite_model_row_keeps_the_tied_option() -> None:
+    """A large finite cancelling model row must not change the selected option."""
+
+    scale = jnp.asarray(1.5e19, dtype=jnp.float32)
+    observation = jnp.array([scale, scale], dtype=jnp.float32)
+    agent = STOMPAgent(_stomp_config())
+    state = agent.start(agent.init(jr.key(7)), observation)
+    head_weights = list(state.base_learner_state.head_params.weights)
+    head_weights[0] = jnp.array([[1.0, 0.0]], dtype=jnp.float32)
+    for index in range(1, len(head_weights)):
+        head_weights[index] = jnp.zeros_like(head_weights[index])
+    learner = state.base_learner_state.replace(
+        head_params=state.base_learner_state.head_params.replace(
+            weights=tuple(head_weights),
+            biases=tuple(
+                jnp.zeros_like(bias) for bias in state.base_learner_state.head_params.biases
+            ),
+        )
+    )
+    cancelling_row = jnp.array(
+        [[scale, -scale], [0.0, 0.0]],
+        dtype=jnp.float32,
+    )
+    product_sum = jnp.sum(cancelling_row * observation, axis=-1)
+    np.testing.assert_array_equal(np.asarray(product_sum), np.zeros((2,), dtype=np.float32))
+    models = state.option_models.replace(
+        env_return_ema=jnp.zeros((2,), dtype=jnp.float32),
+        duration_ema=jnp.ones((2,), dtype=jnp.float32),
+        baseline_mass_ema=jnp.ones((2,), dtype=jnp.float32),
+        discount_ema=jnp.full((2,), 0.5, dtype=jnp.float32),
+        next_state_weights=jnp.stack((cancelling_row, jnp.zeros((2, 2), dtype=jnp.float32))),
+        n_completions=jnp.ones((2,), dtype=jnp.int32),
+    )
+    state = state.replace(
+        base_learner_state=learner,
+        option_models=models,
+        base_average_reward=jnp.array(0.0, dtype=jnp.float32),
+    )
+    before = state.base_learner_state
+
+    result = OptionSearchControl(agent).apply(state, observation)
+    diagnostics = result.diagnostics
+
+    expected_target = jnp.asarray(0.5, dtype=jnp.float32) * scale
+    np.testing.assert_array_equal(
+        np.asarray(diagnostics.candidate_targets[0]),
+        np.array([expected_target, expected_target], dtype=np.float32),
+    )
+    assert int(diagnostics.selected_option_indices[0]) == 0
+    assert int(diagnostics.selected_extended_action_indices[0]) == 2
+    assert bool(diagnostics.applied[0])
+    for head in (0, 1, 3):
+        chex.assert_trees_all_equal(
+            result.state.base_learner_state.head_params.weights[head],
+            before.head_params.weights[head],
+        )
+    assert not bool(
+        jnp.array_equal(
+            result.state.base_learner_state.head_params.weights[2],
+            before.head_params.weights[2],
+        )
+    )
+
+
 def test_equal_residual_priority_uses_stable_lowest_option_index() -> None:
     agent = STOMPAgent(_stomp_config())
     state = _supported_state(agent, targets=(1.0, -1.0))
