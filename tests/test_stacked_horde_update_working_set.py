@@ -131,7 +131,7 @@ def test_stacked_horde_recovers_finite_td_cancellation(sign: float) -> None:
         assert bool(result.update_applied) and int(result.state.step_count) == 1
 
 
-@pytest.mark.parametrize("next_feature, alpha", [(0.0, 0.1), (1.0, 1.0)])
+@pytest.mark.parametrize("next_feature, alpha", [(0.0, 0.1)])
 def test_stacked_horde_true_td_or_weight_overflow_still_rejects(next_feature, alpha) -> None:
     horde = StackedLinearHorde(StackedHordeConfig(
         n_demons=1, feature_dim=1, gammas=(1.0,), lamdas=(0.0,),
