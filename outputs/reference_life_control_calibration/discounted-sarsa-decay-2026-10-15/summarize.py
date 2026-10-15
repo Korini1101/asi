@@ -8,12 +8,18 @@ import math
 import statistics
 import sys
 from pathlib import Path
+from provenance import require_record_source_commit
 
 root = Path(sys.argv[1])
 out = Path(sys.argv[2])
+plan = json.loads(
+    (root / "canonical-calibration-plan.json").read_text(encoding="utf-8")
+)
+expected_source_commit = plan["source_commit"]
 records = []
 for path in sorted(root.glob("*-seed*.json")):
     record = json.loads(path.read_text(encoding="utf-8"))
+    require_record_source_commit(record.get("source_commit"), expected_source_commit, path.name)
     assert record["schema"] == "asi.riverswim_sarsa_decay_diagnostic.shard.v2"
     assert record["development_only"] is True and record["scientific_promotion_allowed"] is False
     assert all(

@@ -45,7 +45,7 @@ Use the committed plan, exact source byte manifest and locked project environmen
 .venv/Scripts/python.exe outputs/reference_life_control_calibration/discounted-sarsa-decay-2026-10-15/summarize.py new-results new-summary.json
 ```
 
-Run from the repository root and provide the script's path. The reproduction snapshot is `415e7d225a4338492275be6cafa69d87c158c30a`; the PR adds the run records and analysis only. Existing framework source bytes are unchanged. `canonical-calibration-plan.json` must be next to `experiment.py`, as required by the original script.
+Run from the repository root and provide the script's path. The reproduction snapshot is `415e7d225a4338492275be6cafa69d87c158c30a`; the runner refuses to start from another checkout commit. The summary also rejects any raw record whose source commit differs from the plan. The PR adds the run records and analysis only. Existing framework source bytes are unchanged. `canonical-calibration-plan.json` must be next to `experiment.py`, as required by the original script.
 
 The summary is recomputed from every raw reward, action and resulting state. It validates the RiverSwim reward lattice and deterministic left transitions, complete counters, identical runtime/source identity, equal numeric payload sizes and the exact paired roster. Hashes bind consistency; they are not authenticated execution attestation.
 
