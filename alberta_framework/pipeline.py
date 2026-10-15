@@ -26,8 +26,9 @@ runners.
 from __future__ import annotations
 
 import operator
+import time
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field
 from typing import Any, Literal, SupportsIndex, cast
 
 import chex
@@ -1811,6 +1812,7 @@ class AlbertaPipeline:
                 result.control_td_error,
             )
 
+        t0 = time.time()
         final_state, outputs = jax.lax.scan(
             step_fn,
             state,
@@ -1831,19 +1833,21 @@ class AlbertaPipeline:
             actions,
             control_td_errors,
         ) = outputs
+        elapsed = time.time() - t0
         # Keep host-only Horde clocks out of the device scan's scalar narrowing.
-        final_horde = replace(
-            final_state.horde_state,
+        final_horde = final_state.horde_state.replace(  # type: ignore[attr-defined]
             birth_timestamp=state.horde_state.birth_timestamp,
-            uptime_s=state.horde_state.uptime_s,
+            uptime_s=state.horde_state.uptime_s + elapsed,
         )
         final_control = final_state.control_state
         if self._config.control_mode == "horde_ac":
-            final_control = replace(
-                cast(HordeActorCriticState, final_control), critic_state=final_horde
+            final_control = cast(
+                HordeActorCriticState, final_control
+            ).replace(  # type: ignore[attr-defined]
+                critic_state=final_horde
             )
-        final_state = replace(
-            final_state, horde_state=final_horde, control_state=final_control
+        final_state = final_state.replace(  # type: ignore[attr-defined]
+            horde_state=final_horde, control_state=final_control
         )
         return AlbertaPipelineArrayResult(
             state=final_state,
