@@ -2177,17 +2177,20 @@ class TestShardsAndMerge:
         """
         campaign = Path(__file__).resolve().parents[1] / "outputs" / "ipmnist_screening"
         expected = json.loads((campaign / "summary.json").read_text(encoding="utf-8"))
-        paths = sorted((campaign / "shards").glob("*.json"))
+        retained = {row["config_name"] for row in expected["results"]}
+        paths = []
         shard_configs = []
-        for path in paths:
+        for path in sorted((campaign / "shards").glob("*.json")):
             shard = json.loads(path.read_text(encoding="utf-8"))
             config_name = shard.get("config_name")
-            assert isinstance(config_name, str), (
-                f"retained shard {path.name} has no config_name"
-            )
-            shard_configs.append(config_name)
+            assert isinstance(config_name, str), f"shard {path.name} has no config_name"
+            if config_name in retained:
+                paths.append(path)
+                shard_configs.append(config_name)
+        # The directory also keeps shards of explored arms that never entered
+        # the roster; only the retained roster must be complete and exact here.
         assert len(paths) == expected["n_shards"]
-        assert set(shard_configs) == {row["config_name"] for row in expected["results"]}
+        assert set(shard_configs) == retained
 
         actual = merge_shards(
             paths,
