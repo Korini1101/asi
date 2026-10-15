@@ -46,5 +46,8 @@ def test_source_commit_guard_accepts_pinned_checkout(monkeypatch, tmp_path: Path
 def test_record_source_commit_guard_rejects_drift() -> None:
     provenance = _provenance_module()
 
-    with pytest.raises(ValueError, match="source commit drifted.json"):
+    with pytest.raises(
+        ValueError,
+        match="drifted.json source commit actual does not match pinned plan commit expected",
+    ):
         provenance.require_record_source_commit("actual", "expected", "drifted.json")
