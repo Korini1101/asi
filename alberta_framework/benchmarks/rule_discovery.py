@@ -487,6 +487,42 @@ def _nb_vote_log_probs(nb_ll: Array, scale: float) -> Array:
     return jax.nn.log_softmax(scaled - jax.lax.stop_gradient(jnp.max(scaled)))
 
 
+def _naive_bayes_log_likelihood(
+    observation: Array,
+    mean: Array,
+    variance: Array,
+) -> Array:
+    """Return class log-likelihoods without an overflowing square sum.
+
+    A finite direct sum stays ``-0.5 * sum`` bit for bit.  When squared
+    deviations leave the float32 range, every overflowing total becomes
+    ``inf`` and ``-0.5 * inf`` is ``-inf``.  Log-softmax of an all-``-inf``
+    vector is NaN, so the vote selects class 0.  Power-of-two scaling ranks
+    those totals by their real magnitude instead.
+    """
+    delta = observation[None, :] - mean
+    terms = jnp.log(variance) + jnp.square(delta) / variance
+    direct = jnp.sum(terms, axis=-1)
+    finite_ll = jnp.asarray(-0.5, dtype=jnp.float32) * direct
+    max_abs = jnp.max(jnp.abs(delta), axis=-1)
+    present = max_abs > 0.0
+    safe_abs = jnp.where(present, max_abs, jnp.ones_like(max_abs))
+    exponent = jnp.frexp(safe_abs)[1]
+    scaled = jnp.ldexp(delta, -exponent[:, None])
+    scaled_sq = jnp.sum(jnp.square(scaled) / variance, axis=-1)
+    log_two = jnp.log(jnp.asarray(2.0, dtype=jnp.float32))
+    positive_sq = jnp.where(scaled_sq > 0.0, scaled_sq, jnp.ones_like(scaled_sq))
+    log_sq = jnp.log(positive_sq)
+    log_sq = log_sq + jnp.where(
+        present,
+        jnp.asarray(2.0, dtype=jnp.float32) * exponent.astype(jnp.float32) * log_two,
+        jnp.zeros_like(log_sq),
+    )
+    log_sq = jnp.where(scaled_sq > 0.0, log_sq, jnp.full_like(log_sq, -jnp.inf))
+    ranked = -log_sq
+    return jnp.where(jnp.all(jnp.isfinite(direct)), finite_ll, ranked)
+
+
 def rule_step(
     genome: Array,
     params: dict[str, Array],
@@ -573,11 +609,7 @@ def rule_step(
     rls_scores = jnp.clip(h_aug @ state.rls_w, -_RLS_SCORE_CLIP, _RLS_SCORE_CLIP)
     input_dim = x_used.shape[0]
     nb_var_safe = jnp.maximum(state.nb_var, _NB_VAR_FLOOR)
-    nb_ll = -0.5 * jnp.sum(
-        jnp.log(nb_var_safe)
-        + (x_used[None, :] - state.nb_mean) ** 2 / nb_var_safe,
-        axis=1,
-    )
+    nb_ll = _naive_bayes_log_likelihood(x_used, state.nb_mean, nb_var_safe)
     s_net = jax.nn.log_softmax(logits)
     s_rls = jax.nn.log_softmax(_RLS_VOTE_TEMP * rls_scores)
     s_nb = _nb_vote_log_probs(nb_ll, float(input_dim))
