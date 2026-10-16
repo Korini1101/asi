@@ -8,18 +8,39 @@ import math
 import statistics
 import sys
 from pathlib import Path
-from provenance import require_record_source_commit
+from provenance import (
+    require_record_digest,
+    require_record_source_commit,
+    require_record_sources,
+    source_blob_digests,
+)
 
 root = Path(sys.argv[1])
 out = Path(sys.argv[2])
-plan = json.loads(
-    (root / "canonical-calibration-plan.json").read_text(encoding="utf-8")
-)
+retained = Path(__file__).resolve().parent
+plan_path = retained / "canonical-calibration-plan.json"
+script_path = retained / "experiment.py"
+plan = json.loads(plan_path.read_text(encoding="utf-8"))
+assert plan["horizon"] == 20000 and plan["scientific_promotion_allowed"] is False
 expected_source_commit = plan["source_commit"]
-records = []
+plan_sha256 = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+script_sha256 = hashlib.sha256(script_path.read_bytes()).hexdigest()
+labelled = []
 for path in sorted(root.glob("*-seed*.json")):
     record = json.loads(path.read_text(encoding="utf-8"))
     require_record_source_commit(record.get("source_commit"), expected_source_commit, path.name)
+    require_record_digest(record.get("plan_sha256"), plan_sha256, path.name, "plan_sha256")
+    require_record_digest(record.get("script_sha256"), script_sha256, path.name, "script_sha256")
+    labelled.append((path, record))
+if not labelled:
+    raise SystemExit(f"no raw records found in {root}")
+source_paths = labelled[0][1].get("source_sha256")
+if not isinstance(source_paths, dict) or not source_paths:
+    raise ValueError(f"{labelled[0][0].name} source_sha256 is missing")
+digest_by_path = source_blob_digests(Path.cwd(), expected_source_commit, sorted(source_paths))
+records = []
+for path, record in labelled:
+    require_record_sources(record, path.name, digest_by_path)
     assert record["schema"] == "asi.riverswim_sarsa_decay_diagnostic.shard.v2"
     assert record["development_only"] is True and record["scientific_promotion_allowed"] is False
     assert all(
