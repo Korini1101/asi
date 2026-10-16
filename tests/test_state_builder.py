@@ -216,6 +216,32 @@ def test_online_gated_update_keeps_a_cancelling_finite_gate_row() -> None:
     assert int(new_state.step_count) == 1
 
 
+@pytest.mark.parametrize(
+    ("weight", "observation"),
+    [(1e19, 1e19), (1e4, 1e34), (1.5e19, 1.5e19), (3e4, 1e34)],
+)
+def test_online_gated_update_keeps_a_large_finite_gate_product(
+    weight: float, observation: float
+) -> None:
+    """A finite gate product above 2**126 must saturate the gate, not zero it."""
+
+    builder = OnlineGatedStateBuilder(
+        OnlineGatedStateBuilderConfig(observation_dim=1, n_actions=0, hidden_dim=1)
+    )
+    state = builder.init(jr.key(0))
+    parameters = jnp.zeros((builder.config.parameter_count(),), dtype=jnp.float32)
+    parameters = parameters.at[0].set(weight).at[7].set(1.0)
+    state = state.replace(parameters=parameters)
+    obs = jnp.asarray(observation, dtype=jnp.float32)
+
+    new_state, representation = builder.update(state, jnp.asarray([obs]), -1, obs, 0.0)
+
+    expected_hidden = jnp.tanh(jnp.asarray(1.0, dtype=jnp.float32))
+    np.testing.assert_array_equal(np.asarray(new_state.hidden), np.asarray([expected_hidden]))
+    assert bool(jnp.all(jnp.isfinite(representation)))
+    assert int(new_state.step_count) == 1
+
+
 def test_online_gated_builder_updates_recurrent_parameters_from_delayed_gradient() -> None:
     builder = OnlineGatedStateBuilder(
         OnlineGatedStateBuilderConfig(

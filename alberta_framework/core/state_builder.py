@@ -1513,8 +1513,11 @@ def _finite_product_matvec(matrix: Array, vector: Array) -> Array:
 
     products = matrix * vector
     max_abs = jnp.max(jnp.abs(products), axis=-1, keepdims=True)
-    scale = jnp.where(max_abs > 0.0, max_abs, jnp.ones_like(max_abs))
-    stable = jnp.sum(products / scale, axis=-1) * jnp.reshape(scale, (-1,))
+    # Scale by a power of two. Dividing by max_abs compiles to a reciprocal
+    # multiply, and the reciprocal of a value above 2**126 flushes to zero.
+    _, exponent = jnp.frexp(max_abs)
+    scaled_sum = jnp.sum(jnp.ldexp(products, -exponent), axis=-1)
+    stable = jnp.ldexp(scaled_sum, jnp.reshape(exponent, (-1,)))
     direct = matrix @ vector
     gap = jnp.abs(direct - stable)
     limit = jnp.maximum(jnp.abs(stable), jnp.asarray(1.0, dtype=jnp.float32))
