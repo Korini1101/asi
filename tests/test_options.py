@@ -1,6 +1,7 @@
 """Tests for STOMP checkpoint payloads and state migration (core/options.py)."""
 
 import dataclasses
+import types
 from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
@@ -11,6 +12,7 @@ import jax.random as jr
 import numpy as np
 import pytest
 
+import alberta_framework.core.options as options_module
 from alberta_framework.core.options import (
     DISPATCH_OWNER_BASE_PRIMITIVE,
     STOMP_OPTION_MODEL_EXPANSION_FIELDS,
@@ -549,7 +551,7 @@ def test_stomp_from_config_preserves_historical_mapping_and_sequence_compatibili
             STOMPConfig.from_config({"subtask_specs": (bad_spec,)})
 
 
-def test_scan_preserves_base_learner_host_clocks() -> None:
+def test_scan_preserves_base_learner_host_clocks(monkeypatch: pytest.MonkeyPatch) -> None:
     agent = _agent()
     state = agent.start(
         agent.init(jr.key(0)),
@@ -563,6 +565,10 @@ def test_scan_preserves_base_learner_host_clocks() -> None:
             uptime_s=uptime,
         )
     )
+    readings = iter((100.0, 101.5))
+    monkeypatch.setattr(
+        options_module, "time", types.SimpleNamespace(time=lambda: next(readings))
+    )
     result = agent.scan(
         state,
         jnp.zeros((2,), dtype=jnp.float32),
@@ -572,4 +578,4 @@ def test_scan_preserves_base_learner_host_clocks() -> None:
     assert type(clocks.birth_timestamp) is float
     assert clocks.birth_timestamp == birth
     assert type(clocks.uptime_s) is float
-    assert clocks.uptime_s == uptime
+    assert clocks.uptime_s == uptime + 1.5
