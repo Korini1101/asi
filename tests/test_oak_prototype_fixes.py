@@ -15,12 +15,15 @@ Covers three defects:
 
 from __future__ import annotations
 
+import types
+
 import chex
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import pytest
 
+import alberta_framework.core.oak as oak_module
 from alberta_framework.core.oak import KeyboardChordLearnerConfig, OaKAgent, OaKConfig
 from alberta_framework.core.options import STOMPConfig, SubtaskSpec
 from alberta_framework.core.prototype_agent import (
@@ -382,7 +385,7 @@ def test_oak_and_keyboard_close_schema_float32_and_resource_boundaries() -> None
         KeyboardChordLearnerConfig(n_options=last_legal_keyboard_options + 1)
 
 
-def test_scan_preserves_base_learner_host_clocks() -> None:
+def test_scan_preserves_base_learner_host_clocks(monkeypatch: pytest.MonkeyPatch) -> None:
     agent, state = _primed(_oak_cfg())
     birth = 1700000000.125
     uptime = 2**24 + 0.25
@@ -393,6 +396,8 @@ def test_scan_preserves_base_learner_host_clocks() -> None:
     state = state.replace(
         stomp_state=state.stomp_state.replace(base_learner_state=learner)
     )
+    readings = iter((100.0, 101.5))
+    monkeypatch.setattr(oak_module, "time", types.SimpleNamespace(time=lambda: next(readings)))
     result = agent.scan(
         state,
         jnp.zeros((2,), dtype=jnp.float32),
@@ -402,4 +407,4 @@ def test_scan_preserves_base_learner_host_clocks() -> None:
     assert type(clocks.birth_timestamp) is float
     assert clocks.birth_timestamp == birth
     assert type(clocks.uptime_s) is float
-    assert clocks.uptime_s == uptime
+    assert clocks.uptime_s == uptime + 1.5
