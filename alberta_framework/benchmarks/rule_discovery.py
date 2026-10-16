@@ -494,11 +494,13 @@ def _naive_bayes_log_likelihood(
 ) -> Array:
     """Return class log-likelihoods without an overflowing square sum.
 
-    A finite direct sum stays ``-0.5 * sum`` bit for bit.  When squared
-    deviations leave the float32 range, every overflowing total becomes
-    ``inf`` and ``-0.5 * inf`` is ``-inf``.  Log-softmax of an all-``-inf``
-    vector is NaN, so the vote selects class 0.  Power-of-two scaling ranks
-    those totals by their real magnitude instead.
+    Every finite direct sum stays ``-0.5 * sum`` bit for bit, and an
+    overflowing class stays ``-inf`` below them.  Only when every class
+    total overflows does ``-0.5 * inf`` make the whole vector ``-inf``;
+    log-softmax of that vector is NaN, so the vote selects class 0.  In that
+    case power-of-two scaling ranks the totals by their real magnitude.  The
+    ``log(variance)`` terms are dropped there, since they are negligible next
+    to a squared deviation above the float32 range.
     """
     delta = observation[None, :] - mean
     terms = jnp.log(variance) + jnp.square(delta) / variance
@@ -520,7 +522,7 @@ def _naive_bayes_log_likelihood(
     )
     log_sq = jnp.where(scaled_sq > 0.0, log_sq, jnp.full_like(log_sq, -jnp.inf))
     ranked = -log_sq
-    return jnp.where(jnp.all(jnp.isfinite(direct)), finite_ll, ranked)
+    return jnp.where(jnp.any(jnp.isfinite(direct)), finite_ll, ranked)
 
 
 def rule_step(
