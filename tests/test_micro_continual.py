@@ -880,6 +880,30 @@ class TestBayesReference:
 
         np.testing.assert_array_equal(predictions, np.asarray([1], dtype=np.int32))
 
+    @pytest.mark.parametrize(
+        ("near_offsets", "far_offset", "nearer"),
+        [
+            ((2.0**63,) * 8, 1e38, 0),
+            ((2.0**63,) * 8, 3e38, 0),
+            ((2.0**63,) * 8, 1e38, 1),
+        ],
+    )
+    def test_bayes_predict_keeps_nearer_class_above_two_to_the_126(
+        self, near_offsets, far_offset, nearer
+    ):
+        """A per-sample max coordinate above 2**126 must not scale to zero."""
+
+        means = jnp.zeros((2, 1, 8), dtype=jnp.float32)
+        means = means.at[nearer, 0, :].set(jnp.asarray(near_offsets, dtype=jnp.float32))
+        means = means.at[1 - nearer, 0, 0].set(jnp.asarray(far_offset, dtype=jnp.float32))
+        observations = jnp.zeros((1, 8), dtype=jnp.float32)
+        sigma = jnp.ones((8,), dtype=jnp.float32)
+
+        for jitted in (False, True):
+            predict = jax.jit(bayes_predict) if jitted else bayes_predict
+            predictions = predict(means, sigma, observations)
+            np.testing.assert_array_equal(predictions, np.asarray([nearer], dtype=np.int32))
+
     def test_stream_geometry_matches_reference_geometry(self):
         stream = generate_stream(TINY, seed=5)
         means, dim_sigma = class_geometry(TINY, seed=5)

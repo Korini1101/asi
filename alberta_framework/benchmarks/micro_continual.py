@@ -706,11 +706,15 @@ def bayes_predict(component_means: Array, dim_sigma: Array, x: Array) -> Array:
         delta = whitened_x - mean[None, :]
         direct = jnp.sum(delta * delta, axis=1)
         max_abs = jnp.max(jnp.abs(delta), axis=1)
-        scale = jnp.where(max_abs > 0.0, max_abs, jnp.ones_like(max_abs))
-        scaled_sum = jnp.sum(jnp.square(delta / scale[:, None]), axis=1)
-        # A positive max coordinate scales to 1, so this sum is at least 1.
+        # Scale by a power of two. Dividing by max_abs compiles to a
+        # reciprocal multiply, and the reciprocal of a value above 2**126
+        # flushes to zero.
+        _, exponent = jnp.frexp(max_abs)
+        scaled_sum = jnp.sum(jnp.square(jnp.ldexp(delta, -exponent[:, None])), axis=1)
+        # A positive max coordinate scales into [0.5, 1), so this sum is at
+        # least 0.25.
         log_distance = jnp.log(scaled_sum) + (
-            jnp.asarray(2.0, dtype=jnp.float32) * jnp.log(scale)
+            jnp.asarray(2.0 * np.log(2.0), dtype=jnp.float32) * exponent.astype(jnp.float32)
         )
         log_distance = jnp.where(
             max_abs > 0.0,
