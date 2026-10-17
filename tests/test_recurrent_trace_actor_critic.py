@@ -2103,9 +2103,9 @@ def test_state_resource_budget_is_exact_and_init_preflights_before_rng(
     assert budget == {
         "parameter_scalars": 124,
         "sensitivity_scalars_per_network": 36,
-        "float32_state_scalars": 343,
-        "state_scalars": 349,
-        "state_nbytes": 1397,
+        "float32_state_scalars": 344,
+        "state_scalars": 350,
+        "state_nbytes": 1401,
     }
     state = RecurrentTraceActorCriticAgent(config).init(2, jr.key(2))
     leaves = jax.tree.leaves(state)
