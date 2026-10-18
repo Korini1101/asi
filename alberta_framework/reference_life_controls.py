@@ -603,6 +603,7 @@ class DiscountedSARSAReferenceConfig:
     leaky_relu_slope: float = 0.01
     use_layer_norm: bool = False
     lamda: float = 0.0
+    initial_q_value: float | None = None
 
     def __post_init__(self) -> None:
         _require_environment_shape(
@@ -676,6 +677,21 @@ class DiscountedSARSAReferenceConfig:
                 n_actions=self.n_actions,
             ),
         )
+        if self.initial_q_value is not None:
+            object.__setattr__(
+                self,
+                "initial_q_value",
+                _canonical_float32(
+                    self.initial_q_value,
+                    name="initial_q_value",
+                    minimum=0.0,
+                    maximum=_FLOAT32_MAX,
+                ),
+            )
+            if self.hidden_sizes:
+                raise ValueError(
+                    "initial_q_value requires the tabular empty-hidden-layer control"
+                )
         if not isinstance(self.use_layer_norm, bool):
             raise ValueError("use_layer_norm must be boolean")
 
@@ -731,6 +747,7 @@ class DiscountedSARSAReferenceConfig:
             "leaky_relu_slope": self.leaky_relu_slope,
             "use_layer_norm": self.use_layer_norm,
             "lamda": self.lamda,
+            "initial_q_value": self.initial_q_value,
             "rng_schedule": "owned_sarsa_key.preview1",
             "rng_implementation": _THREEFRY_IMPLEMENTATION,
             "initial_key_contract": "scalar_threefry2x32_typed_or_legacy.preview1",
@@ -1940,7 +1957,20 @@ class DiscountedSARSAReferenceAdapter(_BaseReferenceControlAdapter):
         # JIT update otherwise promotes both Python floats into persistent JAX
         # leaves on the first transition.  Canonical scalar arrays keep the
         # whole-life state shape fixed and exclude wall-clock time from state.
-        inner = learner.learner_state.replace(  # type: ignore[attr-defined]
+        inner = learner.learner_state
+        if self.config.initial_q_value is not None:
+            initial_q = jnp.asarray(self.config.initial_q_value, dtype=jnp.float32)
+            head_params = inner.head_params.replace(  # type: ignore[attr-defined]
+                weights=tuple(
+                    jnp.full_like(weights, initial_q)
+                    for weights in inner.head_params.weights
+                ),
+                biases=tuple(
+                    jnp.zeros_like(biases) for biases in inner.head_params.biases
+                ),
+            )
+            inner = inner.replace(head_params=head_params)  # type: ignore[attr-defined]
+        inner = inner.replace(  # type: ignore[attr-defined]
             birth_timestamp=jnp.asarray(0.0, dtype=jnp.float32),
             uptime_s=jnp.asarray(0.0, dtype=jnp.float32),
         )
