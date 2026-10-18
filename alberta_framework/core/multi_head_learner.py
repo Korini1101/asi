@@ -1271,7 +1271,19 @@ class MultiHeadMLPLearner:
             mean_abs_err = jnp.sum(
                 jnp.abs(jnp.where(active_mask, predictions_arr - safe_targets, 0.0))
             ) / n_active
-            if type(self._bounder) is ObGDBounding:
+            # Use isinstance (not exact-type checks): valid Bounder subclasses
+            # must take the same error-carrying path. AdaptiveObGDBounding is
+            # checked first so a subclass hierarchy between the two keeps the
+            # RMS stage, matching the "Extends ObGDBounding" contract.
+            if isinstance(self._bounder, AdaptiveObGDBounding):
+                kappa = jnp.asarray(
+                    self._bounder.to_config()["kappa"], dtype=jnp.float32
+                )
+                bounded0, trunk_bounding_metric = _apply_obgd_bound_error_carrying(
+                    tuple(trunk_steps), mean_abs_err, kappa
+                )
+                bounded_trunk_steps = self._bounder._rms_normalize(bounded0)
+            elif isinstance(self._bounder, ObGDBounding):
                 kappa = jnp.asarray(
                     self._bounder.to_config()["kappa"], dtype=jnp.float32
                 )
@@ -1280,14 +1292,6 @@ class MultiHeadMLPLearner:
                         tuple(trunk_steps), mean_abs_err, kappa
                     )
                 )
-            elif type(self._bounder) is AdaptiveObGDBounding:
-                kappa = jnp.asarray(
-                    self._bounder.to_config()["kappa"], dtype=jnp.float32
-                )
-                bounded0, trunk_bounding_metric = _apply_obgd_bound_error_carrying(
-                    tuple(trunk_steps), mean_abs_err, kappa
-                )
-                bounded_trunk_steps = self._bounder._rms_normalize(bounded0)
             else:
                 bounded_trunk_steps, trunk_bounding_metric = self._bounder.bound(
                     tuple(trunk_steps), jnp.array(1.0), tuple(trunk_params_flat)
