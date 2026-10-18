@@ -835,7 +835,13 @@ def test_step7_planning_backup_starts_from_empty_eligibility() -> None:
     imagined gradient stayed in the trace for the next real update.
     """
     cfg = Step7DynaConfig(
-        control=Step6DifferentialSARSAConfig(n_actions=N_ACTIONS, trace_decay=0.9),
+        control=Step6DifferentialSARSAConfig(
+            n_actions=N_ACTIONS,
+            trace_decay=0.9,
+            epsilon_start=1.0,
+            epsilon_end=0.0,
+            epsilon_decay_steps=100,
+        ),
         world_model=Step8WorldModelConfig(
             observation_dim=3, n_actions=N_ACTIONS, hidden_sizes=(), use_layer_norm=False
         ),
@@ -871,6 +877,9 @@ def test_step7_planning_backup_starts_from_empty_eligibility() -> None:
         chex.assert_trees_all_close(final.q_bias, real.q_bias + step * action_mask, atol=1e-6)
         chex.assert_trees_all_equal(final.q_trace_weights, real.q_trace_weights)
         chex.assert_trees_all_equal(final.q_trace_bias, real.q_trace_bias)
+        assert int(final.step_count) == int(real.step_count)
+        chex.assert_trees_all_equal(final.step_words, real.step_words)
+        chex.assert_trees_all_equal(final.epsilon, real.epsilon)
         state = result.state
 
 

@@ -634,7 +634,13 @@ def test_step9_dream_starts_from_empty_eligibility() -> None:
     imagined gradient stayed in the trace for the next real update.
     """
     cfg = Step9DreamingConfig(
-        control=Step6DifferentialSARSAConfig(n_actions=2, trace_decay=0.9),
+        control=Step6DifferentialSARSAConfig(
+            n_actions=2,
+            trace_decay=0.9,
+            epsilon_start=1.0,
+            epsilon_end=0.0,
+            epsilon_decay_steps=100,
+        ),
         observation_dim=2,
         n_actions=2,
         model_hidden_sizes=(),
@@ -658,6 +664,9 @@ def test_step9_dream_starts_from_empty_eligibility() -> None:
         final = result.state.control_state
         chex.assert_trees_all_equal(final.q_trace_weights, real.q_trace_weights)
         chex.assert_trees_all_equal(final.q_trace_bias, real.q_trace_bias)
+        assert int(final.step_count) == int(real.step_count)
+        chex.assert_trees_all_equal(final.step_words, real.step_words)
+        chex.assert_trees_all_equal(final.epsilon, real.epsilon)
         # A one-step backup at a buffered anchor moves only the dreamed
         # action's values, by step * anchor.
         step = cfg.control.q_step_size * result.dream_td_errors[0]

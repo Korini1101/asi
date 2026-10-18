@@ -1181,6 +1181,9 @@ def step7_update(
             rollout_state.replace(  # type: ignore[attr-defined]
                 last_observation=control_after_real.last_observation,
                 last_action=control_after_real.last_action,
+                epsilon=control_after_real.epsilon,
+                step_count=control_after_real.step_count,
+                step_words=control_after_real.step_words,
                 q_trace_weights=carry_state.q_trace_weights,
                 q_trace_bias=carry_state.q_trace_bias,
             ),
