@@ -197,6 +197,8 @@ class DreamingConfig:
                     "max_discount", self.max_discount, lower=0.0
                 ),
             )
+            if self.min_discount > self.max_discount:
+                raise ValueError("min_discount must not exceed max_discount")
         object.__setattr__(
             self,
             "rollout_horizon",

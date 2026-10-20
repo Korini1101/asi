@@ -581,6 +581,20 @@ def test_dreaming_config_rejects_non_bool_stop_on_terminal(bad: object) -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("min_discount", "max_discount"),
+    [(0.9, 0.1), (1.0, 0.5), (0.5, 0.4)],
+)
+def test_dreaming_config_rejects_inverted_discount_clamp(
+    min_discount: float, max_discount: float
+) -> None:
+    # An inverted clamp makes jnp.clip collapse every synthetic discount to
+    # max_discount, silently corrupting the TD bootstrap signal.
+    with pytest.raises(ValueError, match="min_discount must not exceed max_discount"):
+        DreamingConfig(min_discount=min_discount, max_discount=max_discount)
+
+
+@pytest.mark.unit
 def test_dreaming_config_accepts_valid_boundaries() -> None:
     config = DreamingConfig(
         warmup_steps=0,
