@@ -45,7 +45,7 @@ def test_differential_sarsa_discount_hand_calculation(
     expected_weight_traces: list[list[float]],
     expected_bias_traces: list[float],
 ) -> None:
-    """Discount scales both the next-action bootstrap and old trace."""
+    """Discount scales the next-action bootstrap; the prior discount scales the old trace."""
     agent = DifferentialSARSAAgent(
         DifferentialSARSAConfig(
             n_actions=2,
@@ -56,6 +56,7 @@ def test_differential_sarsa_discount_hand_calculation(
         )
     )
     state = agent.init(2, jr.key(0)).replace(
+        previous_discount=jnp.array(discount, dtype=jnp.float32),
         q_weights=jnp.array(
             [[2.0, -1.0], [1.0, 0.5]],
             dtype=jnp.float32,
@@ -260,4 +261,82 @@ def test_step9_dream_target_changes_with_predicted_continuation() -> None:
     chex.assert_trees_all_close(
         half_continuation.dream_td_errors,
         jnp.array([-1.0], dtype=jnp.float32),
+    )
+
+
+def test_differential_sarsa_trace_uses_prior_discount_across_episode_boundary() -> None:
+    """Terminal transition keeps the trace; the next episode starts clean.
+
+    The trace decays by the prior call's discount (gamma_t, the discount of
+    the transition into S_t), not the current call's discount (gamma_{t+1},
+    used only for the TD error bootstrap). A terminal transition
+    (discount=0) must therefore still propagate its TD error through the
+    surviving trace, and the following episode's first transition must see
+    no stale trace.
+    """
+    agent = DifferentialSARSAAgent(
+        DifferentialSARSAConfig(
+            n_actions=2,
+            q_step_size=1.0,
+            average_reward_step_size=0.0,
+            trace_decay=0.9,
+            epsilon_start=0.0,
+            use_bias=False,
+        )
+    )
+    state = agent.init(1, jr.key(0)).replace(
+        last_observation=jnp.array([1.0], dtype=jnp.float32),
+        last_action=jnp.array(0, dtype=jnp.int32),
+    )
+
+    # Non-terminal step: trace for (s0, a0) becomes the grad, 1.0.
+    first = agent.update(
+        state,
+        jnp.array(0.0, dtype=jnp.float32),
+        jnp.array([1.0], dtype=jnp.float32),
+        next_action=jnp.array(0, dtype=jnp.int32),
+        discount=jnp.array(1.0, dtype=jnp.float32),
+    )
+    chex.assert_trees_all_close(
+        first.state.q_trace_weights,
+        jnp.array([[1.0], [0.0]], dtype=jnp.float32),
+    )
+
+    # Terminal step: discount=0 must not wipe the trace before the TD error
+    # is applied. Trace = prior_discount(1.0) * 0.9 * 1.0 + grad(1.0) = 1.9,
+    # so the terminal reward (td_error=1.0) updates w[a0] by 1.9.
+    terminal = agent.update(
+        first.state,
+        jnp.array(1.0, dtype=jnp.float32),
+        jnp.array([0.0], dtype=jnp.float32),
+        next_action=jnp.array(1, dtype=jnp.int32),
+        discount=jnp.array(0.0, dtype=jnp.float32),
+    )
+    chex.assert_trees_all_close(
+        terminal.state.q_trace_weights,
+        jnp.array([[1.9], [0.0]], dtype=jnp.float32),
+    )
+    chex.assert_trees_all_close(
+        terminal.state.q_weights,
+        jnp.array([[1.9], [0.0]], dtype=jnp.float32),
+    )
+    chex.assert_trees_all_close(
+        terminal.state.previous_discount,
+        jnp.array(0.0, dtype=jnp.float32),
+    )
+
+    # New episode: the terminal transition's discount=0 was stored, so the
+    # stale trace is cleared instead of leaking in. (The grad is zero here
+    # because the carried terminal observation is [0.0]; the point is the
+    # 1.9 of stale trace does not survive.)
+    fresh = agent.update(
+        terminal.state,
+        jnp.array(0.0, dtype=jnp.float32),
+        jnp.array([1.0], dtype=jnp.float32),
+        next_action=jnp.array(0, dtype=jnp.int32),
+        discount=jnp.array(1.0, dtype=jnp.float32),
+    )
+    chex.assert_trees_all_close(
+        fresh.state.q_trace_weights,
+        jnp.array([[0.0], [0.0]], dtype=jnp.float32),
     )

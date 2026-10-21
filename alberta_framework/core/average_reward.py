@@ -1975,12 +1975,20 @@ class DifferentialSARSAConfig:
 
 @chex.dataclass(frozen=True)
 class DifferentialSARSAState:
-    """State for linear differential SARSA."""
+    """State for linear differential SARSA.
+
+    ``previous_discount`` carries the discount from the prior update call so
+    the eligibility trace decays by ``gamma_t`` (the discount of the
+    transition into ``S_t``) while the TD error bootstraps with
+    ``gamma_{t+1}`` (Sutton & Barto 2nd ed., eqs. 12.7-12.8). Seeded to 1.0,
+    which is inert against the zero initial traces.
+    """
 
     q_weights: Float[Array, "n_actions feature_dim"]
     q_bias: Float[Array, " n_actions"]
     q_trace_weights: Float[Array, "n_actions feature_dim"]
     q_trace_bias: Float[Array, " n_actions"]
+    previous_discount: Float[Array, ""]
     average_reward: Float[Array, ""]
     last_observation: Float[Array, " feature_dim"]
     last_action: Int[Array, ""]
@@ -2032,8 +2040,10 @@ class DifferentialSARSAAgent:
     + gamma_{t+1} Q(S_{t+1}, A_{t+1}) - Q(S_t, A_t)`.
     The same scalar TD error updates the reward-rate estimate and all Q
     parameters through an action-indexed accumulating trace whose prior value
-    continues by `gamma_{t+1} lambda`. The compatibility default
-    `gamma_{t+1}=1` retains the original continuing-stream behavior.
+    continues by `gamma_t lambda`, where `gamma_t` is the discount carried
+    from the prior update call (the discount of the transition into `S_t`);
+    only the TD error bootstrap uses `gamma_{t+1}`. The compatibility default
+    `gamma_t=1` retains the original continuing-stream behavior.
     """
 
     def __init__(self, config: DifferentialSARSAConfig):
@@ -2092,6 +2102,7 @@ class DifferentialSARSAAgent:
             q_bias=zeros_bias,
             q_trace_weights=zeros_q,
             q_trace_bias=zeros_bias,
+            previous_discount=jnp.array(1.0, dtype=jnp.float32),
             average_reward=jnp.array(average_reward, dtype=jnp.float32),
             last_observation=jnp.zeros(feature_dim, dtype=jnp.float32),
             last_action=jnp.array(-1, dtype=jnp.int32),
@@ -2123,6 +2134,7 @@ class DifferentialSARSAAgent:
                 (self._config.n_actions, feature_dim),
             ),
             ("q_trace_bias", state.q_trace_bias, (self._config.n_actions,)),
+            ("previous_discount", state.previous_discount, ()),
             ("average_reward", state.average_reward, ()),
             ("last_observation", state.last_observation, (feature_dim,)),
             ("epsilon", state.epsilon, ()),
@@ -2377,7 +2389,13 @@ class DifferentialSARSAAgent:
         # With use_bias=False the bias gradient is zeroed, so q_bias stays at
         # its zero init and the Q-function is purely feature-driven.
         grad_bias = action_mask * jnp.float32(cfg.use_bias)
-        trace_continuation = discount_s * lamda
+        # The trace decays by the PRIOR call's discount (state.previous_discount
+        # = gamma_t, the discount of the transition into S_t); only the TD
+        # error bootstrap uses discount_s = gamma_{t+1} (Sutton & Barto 2nd ed.,
+        # eqs. 12.7-12.8). Decaying by gamma_{t+1} would wipe the trace on a
+        # terminal transition before the terminal TD error is applied, and
+        # leak stale traces into the next episode.
+        trace_continuation = state.previous_discount * lamda
         traces = trace_continuation * state.q_trace_weights + grad_weights
         bias_traces = trace_continuation * state.q_trace_bias + grad_bias
         new_step_count = _saturating_int32_increment(state.step_count)
@@ -2396,6 +2414,7 @@ class DifferentialSARSAAgent:
             q_bias=state.q_bias + alpha * td_error * bias_traces,
             q_trace_weights=traces,
             q_trace_bias=bias_traces,
+            previous_discount=discount_s,
             average_reward=new_average_reward,
             last_observation=next_observation_f,
             last_action=selected_next_action,
