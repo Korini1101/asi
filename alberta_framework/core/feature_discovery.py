@@ -873,6 +873,7 @@ class FixedBudgetFeatureLearner:
         error_trace: Array,
         feature_trace: Array,
         feature_energy_trace: Array,
+        effective_step_size: Array,
     ) -> tuple[Array, Array, Array, Array, Array]:
         """Predict causal output-loss reduction for each feature."""
         if self._future_utility_trace_decay == 0.0:
@@ -880,7 +881,7 @@ class FixedBudgetFeatureLearner:
                 errors,
                 features,
                 active_mask,
-                self._step_size_output,
+                effective_step_size,
                 active_count,
             )
             new_contribution_trace = contribution_trace
@@ -897,7 +898,7 @@ class FixedBudgetFeatureLearner:
                 errors,
                 features,
                 active_mask,
-                self._step_size_output,
+                effective_step_size,
                 active_count,
                 error_trace,
                 feature_trace,
@@ -911,7 +912,7 @@ class FixedBudgetFeatureLearner:
                     errors,
                     features,
                     active_mask,
-                    self._step_size_output,
+                    effective_step_size,
                     active_count,
                     contribution_trace,
                     feature_energy_trace,
@@ -952,6 +953,7 @@ class FixedBudgetFeatureLearner:
         error_trace: Array,
         feature_trace: Array,
         feature_energy_trace: Array,
+        effective_step_size: Array,
     ) -> tuple[Array, Array, Array, Array, Array]:
         """Blend historical utility with causal predicted future utility."""
         if self._future_utility_mix == 0.0:
@@ -978,6 +980,7 @@ class FixedBudgetFeatureLearner:
             error_trace,
             feature_trace,
             feature_energy_trace,
+            effective_step_size,
         )
         return (
             (1.0 - self._future_utility_mix) * current_signal
@@ -1233,6 +1236,54 @@ class FixedBudgetFeatureLearner:
         )
         feature_bias_delta = self._step_size_feature * feature_credit
 
+        # Candidate deltas come before the utility signals: the ObGD bound
+        # sums every delta, and the future-utility signal needs the bound.
+        candidate_output_delta = jnp.zeros_like(state.candidate_output_weights)
+        candidate_weight_delta = jnp.zeros_like(state.candidate_weights)
+        candidate_bias_delta = jnp.zeros_like(state.candidate_biases)
+        if self._candidate_count > 0:
+            candidate_features, candidate_derivs = self._features(
+                state.candidate_weights, state.candidate_biases, observation
+            )
+            candidate_output_delta = (
+                self._step_size_output
+                * errors[:, None]
+                * candidate_features[None, :]
+                / active_count
+            )
+            candidate_credit = (
+                (errors @ state.candidate_output_weights) * candidate_derivs / active_count
+            )
+            candidate_weight_delta = (
+                self._step_size_feature * candidate_credit[:, None] * observation[None, :]
+            )
+            candidate_bias_delta = self._step_size_feature * candidate_credit
+
+        # ObGD bounding runs before the utility signals (same order as
+        # FixedBudgetInteractionLearner): the future-utility counterfactual
+        # must use the step size that actually applies to the weights.
+        bounding_scale = jnp.array(1.0, dtype=jnp.float32)
+        if self._use_obgd:
+            total_step = (
+                jnp.sum(jnp.abs(output_delta))
+                + jnp.sum(jnp.abs(output_bias_delta))
+                + jnp.sum(jnp.abs(feature_weight_delta))
+                + jnp.sum(jnp.abs(feature_bias_delta))
+                + jnp.sum(jnp.abs(candidate_output_delta))
+                + jnp.sum(jnp.abs(candidate_weight_delta))
+                + jnp.sum(jnp.abs(candidate_bias_delta))
+            )
+            err_norm = jnp.linalg.norm(errors)
+            bound_magnitude = self._obgd_kappa * jnp.maximum(err_norm, 1.0) * total_step
+            bounding_scale = 1.0 / jnp.maximum(bound_magnitude, 1.0)
+            output_delta = bounding_scale * output_delta
+            output_bias_delta = bounding_scale * output_bias_delta
+            feature_weight_delta = bounding_scale * feature_weight_delta
+            feature_bias_delta = bounding_scale * feature_bias_delta
+            candidate_output_delta = bounding_scale * candidate_output_delta
+            candidate_weight_delta = bounding_scale * candidate_weight_delta
+            candidate_bias_delta = bounding_scale * candidate_bias_delta
+
         output_utility_signal = self._output_utility_signal(
             state.output_weights,
             features,
@@ -1257,6 +1308,7 @@ class FixedBudgetFeatureLearner:
             state.utility_error_trace,
             state.utility_feature_trace,
             state.utility_feature_energy_trace,
+            self._step_size_output * bounding_scale,
         )
         utility_signal_second_moment = state.utility_signal_second_moment
         if self._future_utility_mix > 0.0 and self._future_utility_normalization != "none":
@@ -1273,31 +1325,12 @@ class FixedBudgetFeatureLearner:
             utility_signal,
         )
 
-        candidate_output_delta = jnp.zeros_like(state.candidate_output_weights)
-        candidate_weight_delta = jnp.zeros_like(state.candidate_weights)
-        candidate_bias_delta = jnp.zeros_like(state.candidate_biases)
         new_candidate_utilities = state.candidate_utilities
         candidate_utility_contribution_trace = state.candidate_utility_contribution_trace
         candidate_utility_feature_trace = state.candidate_utility_feature_trace
         candidate_utility_feature_energy_trace = state.candidate_utility_feature_energy_trace
         candidate_utility_signal_second_moment = state.candidate_utility_signal_second_moment
         if self._candidate_count > 0:
-            candidate_features, candidate_derivs = self._features(
-                state.candidate_weights, state.candidate_biases, observation
-            )
-            candidate_output_delta = (
-                self._step_size_output
-                * errors[:, None]
-                * candidate_features[None, :]
-                / active_count
-            )
-            candidate_credit = (
-                (errors @ state.candidate_output_weights) * candidate_derivs / active_count
-            )
-            candidate_weight_delta = (
-                self._step_size_feature * candidate_credit[:, None] * observation[None, :]
-            )
-            candidate_bias_delta = self._step_size_feature * candidate_credit
             candidate_output_signal = self._output_utility_signal(
                 state.candidate_output_weights,
                 candidate_features,
@@ -1322,6 +1355,7 @@ class FixedBudgetFeatureLearner:
                 state.utility_error_trace,
                 state.candidate_utility_feature_trace,
                 state.candidate_utility_feature_energy_trace,
+                self._step_size_output * bounding_scale,
             )
             del _candidate_error_trace
             if self._future_utility_mix > 0.0 and self._future_utility_normalization != "none":
@@ -1339,28 +1373,6 @@ class FixedBudgetFeatureLearner:
                 state.candidate_utilities,
                 candidate_signal,
             )
-
-        bounding_scale = jnp.array(1.0, dtype=jnp.float32)
-        if self._use_obgd:
-            total_step = (
-                jnp.sum(jnp.abs(output_delta))
-                + jnp.sum(jnp.abs(output_bias_delta))
-                + jnp.sum(jnp.abs(feature_weight_delta))
-                + jnp.sum(jnp.abs(feature_bias_delta))
-                + jnp.sum(jnp.abs(candidate_output_delta))
-                + jnp.sum(jnp.abs(candidate_weight_delta))
-                + jnp.sum(jnp.abs(candidate_bias_delta))
-            )
-            err_norm = jnp.linalg.norm(errors)
-            bound_magnitude = self._obgd_kappa * jnp.maximum(err_norm, 1.0) * total_step
-            bounding_scale = 1.0 / jnp.maximum(bound_magnitude, 1.0)
-            output_delta = bounding_scale * output_delta
-            output_bias_delta = bounding_scale * output_bias_delta
-            feature_weight_delta = bounding_scale * feature_weight_delta
-            feature_bias_delta = bounding_scale * feature_bias_delta
-            candidate_output_delta = bounding_scale * candidate_output_delta
-            candidate_weight_delta = bounding_scale * candidate_weight_delta
-            candidate_bias_delta = bounding_scale * candidate_bias_delta
 
         feature_weights = state.feature_weights + feature_weight_delta
         feature_biases = state.feature_biases + feature_bias_delta
