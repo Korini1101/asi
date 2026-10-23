@@ -2219,6 +2219,19 @@ def test_reference_dense_rtu_and_live_sparse_feedforward_initialization() -> Non
     assert jnp.allclose(jnp.mean(jnp.square(normalized)), 1.0, atol=1e-6)
 
 
+def test_parameterless_layer_norm_preserves_large_finite_contrast() -> None:
+    inputs = jnp.asarray((7e37,) * 4 + (-7e37,) * 4, dtype=jnp.float32)
+
+    normalized = parameterless_layer_norm(inputs, epsilon=1e-8)
+
+    assert bool(jnp.all(jnp.isfinite(normalized)))
+    np.testing.assert_allclose(
+        normalized,
+        jnp.asarray((1.0,) * 4 + (-1.0,) * 4, dtype=jnp.float32),
+        rtol=1e-6,
+    )
+
+
 def test_initialized_radii_respect_small_configured_interval() -> None:
     config = RecurrentTraceActorCriticConfig(
         n_actions=2,

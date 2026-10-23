@@ -602,7 +602,30 @@ def parameterless_layer_norm(inputs: Array, epsilon: float = 1e-5) -> Array:
     mean = jnp.mean(inputs, axis=-1, keepdims=True)
     centered = inputs - mean
     variance = jnp.mean(jnp.square(centered), axis=-1, keepdims=True)
-    return centered * jax.lax.rsqrt(variance + jnp.asarray(epsilon, inputs.dtype))
+    epsilon_array = jnp.asarray(epsilon, inputs.dtype)
+    direct = centered * jax.lax.rsqrt(variance + epsilon_array)
+
+    scale = jnp.max(jnp.abs(inputs), axis=-1, keepdims=True)
+    safe_scale = jnp.where(scale > 0.0, scale, jnp.ones_like(scale))
+    scaled_inputs = inputs / safe_scale
+    scaled_centered = scaled_inputs - jnp.mean(
+        scaled_inputs, axis=-1, keepdims=True
+    )
+    scaled_variance = jnp.mean(
+        jnp.square(scaled_centered), axis=-1, keepdims=True
+    )
+    scaled_epsilon = (epsilon_array / safe_scale) / safe_scale
+    stable_denominator = jnp.where(
+        scaled_variance > 0.0,
+        scaled_variance + scaled_epsilon,
+        jnp.ones_like(scaled_variance),
+    )
+    stable = scaled_centered * jax.lax.rsqrt(stable_denominator)
+    reduction_only_overflow = (
+        (~jnp.isfinite(mean) | ~jnp.isfinite(variance))
+        & jnp.all(jnp.isfinite(inputs), axis=-1, keepdims=True)
+    )
+    return jnp.where(reduction_only_overflow, stable, direct)
 
 
 def leaky_relu(inputs: Array, negative_slope: float = 0.01) -> Array:
