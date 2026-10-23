@@ -48,9 +48,12 @@ from alberta_framework.core.normalizers import (
 from alberta_framework.core.optimizers import (
     LMS,
     TDIDBD,
+    AdaptiveObGDBounding,
     Bounder,
+    ObGDBounding,
     Optimizer,
     TDOptimizer,
+    _apply_obgd_bound_error_carrying,
 )
 from alberta_framework.core.types import (
     AutostepParamState,
@@ -1613,12 +1616,37 @@ class MLPLearner:
             new_opt_states.append(new_opt)
             optimizer_updates_applied.append(optimizer_update_applied)
 
-        # Bounding (optional)
+        # Bounding (optional). When the proposed steps already carry the
+        # prediction error (delta-returning optimizers, i.e. direct_steps),
+        # the ObGD-family bounders must consume the error exactly once --
+        # the published error-carrying form -- rather than the pseudo-error
+        # 1.0, which lets small-error updates overshoot the published
+        # guarantee by up to 1/|error| (Elsayed et al. 2024).
         bounding_metric = jnp.array(1.0, dtype=jnp.float32)
         if self._bounder is not None:
-            bounded_steps, bounding_metric = self._bounder.bound(
-                tuple(all_steps), step_error, tuple(all_params)
-            )
+            # Use isinstance (not exact-type checks): valid Bounder subclasses
+            # must take the same error-carrying path. AdaptiveObGDBounding is
+            # checked first so a subclass hierarchy between the two keeps the
+            # RMS stage, matching the "Extends ObGDBounding" contract.
+            if direct_steps and isinstance(self._bounder, AdaptiveObGDBounding):
+                kappa = jnp.asarray(
+                    self._bounder.to_config()["kappa"], dtype=jnp.float32
+                )
+                bounded0, bounding_metric = _apply_obgd_bound_error_carrying(
+                    tuple(all_steps), error, kappa
+                )
+                bounded_steps = self._bounder._rms_normalize(bounded0)
+            elif direct_steps and isinstance(self._bounder, ObGDBounding):
+                kappa = jnp.asarray(
+                    self._bounder.to_config()["kappa"], dtype=jnp.float32
+                )
+                bounded_steps, bounding_metric = _apply_obgd_bound_error_carrying(
+                    tuple(all_steps), error, kappa
+                )
+            else:
+                bounded_steps, bounding_metric = self._bounder.bound(
+                    tuple(all_steps), step_error, tuple(all_params)
+                )
             all_steps = list(bounded_steps)
 
         new_weights = []
