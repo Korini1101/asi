@@ -206,7 +206,8 @@ def _require_horde_ac_matching_length(name: str, value: object, *, expected: int
 def _linear_actor_resources(n_actions: int, feature_dim: object) -> dict[str, int]:
     width = _require_int32("feature_dim", feature_dim, minimum=1)
     parameters = n_actions * (width + 1)
-    float32_state = 2 * parameters + width
+    # ``+ 1`` counts the ``previous_discount`` float32 scalar carried in state.
+    float32_state = 2 * parameters + width + 1
     logical_state = float32_state + 4
     return _check_actor_resources(
         {
@@ -404,6 +405,11 @@ class HordeActorCriticState:
         last_action: Previous action ``a_t``.
         rng_key: Random key used for action sampling.
         step_count: Number of actor-critic updates taken.
+        previous_discount: Discount of the most recent accepted transition
+            (``gamma_t``, the discount into the current state's observation);
+            it decays the eligibility traces while the current call's discount
+            only controls the TD bootstrap. Initialized to the value head's
+            configured demon gamma with zero traces.
     """
 
     actor_weights: Float[Array, "n_actions feature_dim"]
@@ -415,6 +421,7 @@ class HordeActorCriticState:
     last_action: Int[Array, ""]
     rng_key: Array
     step_count: Int[Array, ""]
+    previous_discount: Float[Array, ""]
 
 
 @chex.dataclass(frozen=True)
@@ -526,7 +533,15 @@ class QHordeActorCriticConfig:
 
 @chex.dataclass(frozen=True)
 class QHordeActorCriticState:
-    """Immutable state for ``QHordeActorCriticAgent``."""
+    """Immutable state for ``QHordeActorCriticAgent``.
+
+    Attributes:
+        previous_discount: Discount of the most recent accepted transition
+            (``gamma_t``, the discount into the current state's observation);
+            it decays the eligibility traces while the current call's discount
+            only controls the TD bootstrap. Initialized to ``config.gamma``
+            with zero traces.
+    """
 
     actor_weights: Float[Array, "n_actions feature_dim"]
     actor_bias: Float[Array, " n_actions"]
@@ -537,6 +552,7 @@ class QHordeActorCriticState:
     last_action: Int[Array, ""]
     rng_key: Array
     step_count: Int[Array, ""]
+    previous_discount: Float[Array, ""]
 
 
 @chex.dataclass(frozen=True)
@@ -657,6 +673,7 @@ class QHordeActorCriticAgent:
             last_action=jnp.array(-1, dtype=jnp.int32),
             rng_key=actor_key,
             step_count=jnp.array(0, dtype=jnp.int32),
+            previous_discount=jnp.array(self._config.gamma, dtype=jnp.float32),
         )
 
     @functools.partial(jax.jit, static_argnums=(0,))
@@ -717,7 +734,16 @@ class QHordeActorCriticAgent:
         terminated: Array,
         prediction_cumulants: Array | None = None,
     ) -> QHordeActorCriticUpdateResult:
-        """Update actor and action-value Horde critic from one transition."""
+        """Update actor and action-value Horde critic from one transition.
+
+        The actor eligibility traces decay with the incoming discount
+        (``state.previous_discount``, the prior accepted transition's discount
+        into the current observation); the current call's discount (``0`` when
+        ``terminated``) only controls the TD bootstrap. The update then
+        refreshes ``previous_discount`` to the current call's discount, so a
+        terminal reward credits the completed episode before its stored traces
+        are cleared.
+        """
         cfg = self._config
         prev_obs = state.last_observation
         action_valid = (state.last_action >= 0) & (state.last_action < cfg.n_actions)
@@ -768,7 +794,14 @@ class QHordeActorCriticAgent:
             else sampled_actor_grad_bias
         )
         actor_grad_weights = actor_grad_bias[:, None] * prev_obs[None, :]
-        actor_decay = effective_gamma * cfg.actor_lamda
+        # Eligibility traces decay with the incoming discount: the discount of
+        # the prior accepted transition into the current state's observation.
+        # The current call's discount only controls the TD bootstrap. Decaying
+        # with the outgoing discount would wipe the episode trace at a
+        # terminal transition (discount 0) before the terminal TD error
+        # credits it, so the terminal reward would reach only the final
+        # step's gradient instead of the completed episode.
+        actor_decay = state.previous_discount * cfg.actor_lamda
         actor_trace_weights = (
             _skip_zero_scale(actor_decay, state.actor_trace_weights) + actor_grad_weights
         )
@@ -802,6 +835,7 @@ class QHordeActorCriticAgent:
             ),
             critic_state=critic_result.state,
             step_count=_saturating_int32_counter_increment(state.step_count),
+            previous_discount=effective_gamma,
         )
         next_action, key, policy = (
             (sampled_next_action, sampled_key, sampled_policy)
@@ -955,6 +989,10 @@ class HordeActorCriticAgent:
             last_action=jnp.array(-1, dtype=jnp.int32),
             rng_key=actor_key,
             step_count=jnp.array(0, dtype=jnp.int32),
+            previous_discount=jnp.asarray(
+                self._critic.horde_spec.gammas[self._config.value_head_index],
+                dtype=jnp.float32,
+            ),
         )
 
     @functools.partial(jax.jit, static_argnums=(0,))
@@ -1031,7 +1069,10 @@ class HordeActorCriticAgent:
         The actor follows the AC(lambda) policy-gradient update
         ``theta += alpha * delta_t * e_t``, where ``delta_t`` is the TD error
         from the configured Horde value head and
-        ``e_t = gamma_t * lambda * e_{t-1} + grad log pi(A_t | S_t)``. When an
+        ``e_t = gamma_t * lambda * e_{t-1} + grad log pi(A_t | S_t)``. Here
+        ``gamma_t`` is the prior accepted transition's discount into ``S_t``
+        (the incoming discount); the current transition's discount
+        ``gamma_{t+1}`` only controls the TD bootstrap. When an
         actor bounder is configured, the proposed actor step is scaled by the
         same ``Bounder`` interface used elsewhere in the framework.
 
@@ -1041,8 +1082,12 @@ class HordeActorCriticAgent:
             observation: Next observation.
             auxiliary_cumulants: Optional cumulants for all non-value heads,
                 ordered by Horde head index with the value head removed.
-            discount: Optional scalar per-transition value-head discount. When
-                omitted, the value head's configured demon gamma is used.
+            discount: Optional scalar per-transition value-head discount
+                ``gamma_{t+1}`` for the TD bootstrap. When omitted, the value
+                head's configured demon gamma is used. The eligibility traces
+                decay with the prior accepted transition's discount
+                (``state.previous_discount``), which the update then refreshes
+                to this transition's discount.
 
         Returns:
             ``HordeActorCriticUpdateResult`` with actor and critic metrics.
@@ -1097,7 +1142,14 @@ class HordeActorCriticAgent:
         one_hot = jax.nn.one_hot(safe_last_action, cfg.n_actions, dtype=jnp.float32)
         actor_grad_bias = (one_hot - old_policy) / cfg.temperature
         actor_grad_weights = actor_grad_bias[:, None] * prev_obs[None, :]
-        actor_decay = value_discount * cfg.actor_lamda
+        # Eligibility traces decay with the incoming discount: the discount of
+        # the prior accepted transition into the current state's observation.
+        # The current call's discount only controls the TD bootstrap. Decaying
+        # with the outgoing discount would wipe the episode trace at a
+        # terminal transition (discount 0) before the terminal TD error
+        # credits it, so the terminal reward would reach only the final
+        # step's gradient instead of the completed episode.
+        actor_decay = state.previous_discount * cfg.actor_lamda
         actor_trace_weights = (
             _skip_zero_scale(actor_decay, state.actor_trace_weights) + actor_grad_weights
         )
@@ -1127,6 +1179,7 @@ class HordeActorCriticAgent:
             ),
             critic_state=critic_result.state,
             step_count=_saturating_int32_counter_increment(state.step_count),
+            previous_discount=value_discount,
         )
         next_action, key, next_policy = self.select_action(updated, observation)
         proposed_state = updated.replace(
