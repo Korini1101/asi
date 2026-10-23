@@ -194,6 +194,51 @@ def test_world_model_update_is_finite_and_shape_stable() -> None:
     assert int(result.state.step_count) == 1
 
 
+def test_world_model_update_retains_finite_wide_mse() -> None:
+    observation_dim = 8
+    model = OneStepWorldModel(
+        WorldModelConfig(
+            observation_dim=observation_dim,
+            n_actions=2,
+            hidden_sizes=(),
+            step_size=0.0,
+            sparsity=0.0,
+        )
+    )
+    state = model.init(jr.key(20))
+    heads = state.learner_state.head_params
+    state = dataclasses.replace(
+        state,
+        learner_state=dataclasses.replace(
+            state.learner_state,
+            head_params=dataclasses.replace(
+                heads,
+                weights=tuple(jnp.zeros_like(weight) for weight in heads.weights),
+                biases=tuple(
+                    jnp.full_like(bias, 7e18)
+                    if index > 0
+                    else jnp.zeros_like(bias)
+                    for index, bias in enumerate(heads.biases)
+                ),
+            ),
+        ),
+    )
+    zeros = jnp.zeros((observation_dim,), dtype=jnp.float32)
+
+    result = model.update(
+        state,
+        zeros,
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0.0, dtype=jnp.float32),
+        zeros,
+    )
+
+    assert bool(result.update_applied)
+    assert bool(jnp.isfinite(result.observation_mse))
+    assert float(result.observation_mse) == pytest.approx(4.9e37, rel=1e-6)
+    assert int(result.state.step_count) == 1
+
+
 def test_world_model_config_roundtrip_preserves_action_encoding() -> None:
     cfg = WorldModelConfig(
         observation_dim=5,
