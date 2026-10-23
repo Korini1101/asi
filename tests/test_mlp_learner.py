@@ -722,6 +722,20 @@ class TestAGCBounding:
         # Some units should be clipped
         assert float(frac) > 0.0
 
+    def test_large_finite_unit_norm_clips_to_finite_budget(self):
+        params = (jnp.ones((1, 8), dtype=jnp.float32),)
+        steps = (jnp.full((1, 8), 7e18, dtype=jnp.float32),)
+
+        (clipped,), fraction = AGCBounding(clip_factor=1.0).bound(
+            steps,
+            jnp.asarray(1.0, dtype=jnp.float32),
+            params,
+        )
+
+        assert bool(jnp.all(jnp.isfinite(clipped)))
+        np.testing.assert_allclose(clipped, params[0], rtol=1e-6)
+        assert float(fraction) == 1.0
+
     def test_metric_fraction_clipped(self):
         """Metric should report correct fraction of clipped units."""
         # Create a scenario where exactly the 2D param gets clipped but the 1D doesn't

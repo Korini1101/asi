@@ -226,8 +226,47 @@ def _unitwise_norm(x: Array) -> Array:
     For scalars: absolute value.
     """
     if x.ndim >= 2:
-        return jnp.sqrt(jnp.sum(x**2, axis=tuple(range(1, x.ndim)), keepdims=True))
+        axes = tuple(range(1, x.ndim))
+        direct = jnp.sqrt(jnp.sum(x * x, axis=axes, keepdims=True))
+        scale = jnp.max(jnp.abs(x), axis=axes, keepdims=True)
+        safe_scale = jnp.where(scale > 0.0, scale, jnp.ones_like(scale))
+        normalized = x / safe_scale
+        stable = scale * jnp.sqrt(
+            jnp.sum(normalized * normalized, axis=axes, keepdims=True)
+        )
+        reduction_only_overflow = ~jnp.isfinite(direct) & jnp.all(
+            jnp.isfinite(x), axis=axes, keepdims=True
+        )
+        return jnp.where(reduction_only_overflow, stable, direct)
     return jnp.abs(x)
+
+
+def _tuple_root_mean_square(values: tuple[Array, ...], epsilon: float) -> Array:
+    """Return one RMS across parameter arrays without finite reduction overflow."""
+    sum_squares = jnp.asarray(0.0, dtype=jnp.float32)
+    count = 0
+    scale = jnp.asarray(0.0, dtype=jnp.float32)
+    all_finite = jnp.asarray(True)
+    for value in values:
+        sum_squares = sum_squares + jnp.sum(value * value)
+        count += value.size
+        scale = jnp.maximum(scale, jnp.max(jnp.abs(value)))
+        all_finite = all_finite & jnp.all(jnp.isfinite(value))
+    denominator = jnp.maximum(jnp.asarray(count, dtype=jnp.float32), 1.0)
+    direct = jnp.sqrt(sum_squares / denominator + epsilon)
+    safe_scale = jnp.where(scale > 0.0, scale, jnp.ones_like(scale))
+    normalized_sum_squares = jnp.asarray(0.0, dtype=jnp.float32)
+    for value in values:
+        normalized = value / safe_scale
+        normalized_sum_squares = normalized_sum_squares + jnp.sum(
+            normalized * normalized
+        )
+    scaled_epsilon = (epsilon / safe_scale) / safe_scale
+    stable = scale * jnp.sqrt(
+        normalized_sum_squares / denominator + scaled_epsilon
+    )
+    reduction_only_overflow = ~jnp.isfinite(direct) & all_finite
+    return jnp.where(reduction_only_overflow, stable, direct)
 
 
 class AdaptiveObGDBounding(Bounder):
@@ -281,12 +320,7 @@ class AdaptiveObGDBounding(Bounder):
         bounded, scale = _apply_obgd_bound(steps, error, self._kappa)
 
         # Per-weight RMS normalization across all bounded steps.
-        sum_sq = jnp.array(0.0)
-        n_weights = jnp.array(0)
-        for s in bounded:
-            sum_sq = sum_sq + jnp.sum(s**2)
-            n_weights = n_weights + s.size
-        rms = jnp.sqrt(sum_sq / jnp.maximum(n_weights.astype(jnp.float32), 1.0) + self._eps)
+        rms = _tuple_root_mean_square(bounded, self._eps)
         rms_scale = jnp.maximum(rms, 1.0)
         adaptive = tuple(s / rms_scale for s in bounded)
         return adaptive, scale
