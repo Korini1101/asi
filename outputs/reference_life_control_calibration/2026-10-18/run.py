@@ -60,18 +60,51 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _source_identity() -> dict[str, Any]:
-    head = subprocess.run(
+def _git_head() -> str:
+    return subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=ROOT,
         check=True,
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+def _source_identity() -> dict[str, Any]:
     return {
-        "git_head": head,
+        "git_head": _git_head(),
         "files": {relative: _sha256(ROOT / relative) for relative in SOURCE_PATHS},
     }
+
+
+def _verify_source_identity(recorded: object) -> dict[str, Any]:
+    """Reject shards whose bound sources differ from the summarizing checkout.
+
+    Every recorded source-file digest must equal the digest of the same file in
+    the current checkout. The recorded commit must be the current ``HEAD`` or
+    one of its ancestors: the commit that retains the shards cannot be named by
+    the shards themselves, so equality is required at the file-digest level and
+    ancestry at the commit level.
+    """
+    if type(recorded) is not dict:
+        raise ValueError("source identity must be an exact object")
+    current = _source_identity()
+    if recorded.get("files") != current["files"]:
+        raise ValueError("recorded source digests differ from the current checkout")
+    recorded_head = recorded.get("git_head")
+    if type(recorded_head) is not str or len(recorded_head) != 40:
+        raise ValueError("recorded git head is invalid")
+    if recorded_head != current["git_head"]:
+        ancestry = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", recorded_head, "HEAD"],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if ancestry.returncode != 0:
+            raise ValueError("recorded git head is not the current HEAD or one of its ancestors")
+    return current
 
 
 def _runtime_identity() -> dict[str, Any]:
@@ -249,6 +282,7 @@ def _summarize(paths: list[Path]) -> dict[str, Any]:
     runtimes = {json.dumps(record["runtime_identity"], sort_keys=True) for record in records}
     if len(sources) != 1 or len(runtimes) != 1:
         raise ValueError("records do not share one source/runtime identity")
+    summarizing_identity = _verify_source_identity(records[0]["source_identity"])
     by_pair = {(record["arm"], record["seed"]): record for record in records}
     paired = []
     optimistic_high_end = 0
@@ -286,6 +320,7 @@ def _summarize(paths: list[Path]) -> dict[str, Any]:
         "schema": SUMMARY_SCHEMA,
         "evidence_policy": POLICY,
         "source_identity": records[0]["source_identity"],
+        "summarizing_source_identity": summarizing_identity,
         "runtime_identity": records[0]["runtime_identity"],
         "seed_roster": list(SEEDS),
         "arm_summaries": arm_summaries,
