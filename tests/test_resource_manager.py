@@ -55,6 +55,20 @@ class TestLearnedResourceManager:
         weights = manager.weights(state, 1)
         assert weights.tolist() == pytest.approx([1 / 3, 1 / 3, 1 / 3])
 
+    @pytest.mark.parametrize("shape", [(1,), (1, 1)])
+    def test_context_id_rejects_nonscalar_aliases(
+        self,
+        shape: tuple[int, ...],
+    ) -> None:
+        manager = LearnedResourceManager(n_actions=3, n_contexts=2)
+        state = manager.init()
+        context_id = jnp.ones(shape, dtype=jnp.int32)
+
+        with pytest.raises(ValueError, match="action must be a scalar"):
+            manager.weights(state, context_id)
+        with pytest.raises(ValueError, match="action must be a scalar"):
+            manager.update(state, jnp.zeros((3,), dtype=jnp.float32), context_id)
+
     def test_weights_shift_toward_lower_loss_action(self) -> None:
         manager = LearnedResourceManager(
             n_actions=3,
