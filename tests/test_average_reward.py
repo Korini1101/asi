@@ -142,6 +142,32 @@ def test_differential_gtd_infinite_reward_does_not_poison_weights() -> None:
     assert bool(recovered.update_applied)
 
 
+def test_differential_gtd_reports_finite_large_secondary_rms() -> None:
+    learner = DifferentialGTDLearner(
+        DifferentialGTDConfig(
+            value_step_size=0.0,
+            secondary_step_size=0.0,
+            average_reward_step_size=0.0,
+        )
+    )
+    state = learner.init(8).replace(
+        secondary_weights=jnp.full((8,), 7e18, dtype=jnp.float32)
+    )
+    observation = jnp.zeros((8,), dtype=jnp.float32)
+
+    result = learner.update(
+        state,
+        observation,
+        jnp.asarray(0.0, dtype=jnp.float32),
+        observation,
+        jnp.asarray(1.0, dtype=jnp.float32),
+    )
+
+    assert bool(result.update_applied)
+    assert bool(jnp.isfinite(result.metrics[5]))
+    assert float(result.metrics[5]) == pytest.approx(7e18, rel=1e-6)
+
+
 def test_average_reward_horde_infinite_cumulant_does_not_poison_rbar() -> None:
     """Inf is not NaN, so it used to keep a demon 'active'.
 
