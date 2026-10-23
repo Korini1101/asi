@@ -595,9 +595,14 @@ def create_obgd_state(
     )
 
 
-def _float32_log(value: float) -> Array:
-    # float32 log flushes a positive subnormal to zero and returns -inf.
-    # The log of that same value is finite and fits in float32.
+def finite_float32_log(value: float) -> Array:
+    """Return ``log(value)`` as a float32 scalar, finite for a positive float32 subnormal.
+
+    ``jnp.log`` on a float32 subnormal flushes the input to zero and returns
+    ``-inf`` even though the true log (about -87 to -103) fits in float32.
+    Ordinary values take the direct ``jnp.log`` path bit for bit; only a
+    non-finite direct result with a finite true log is replaced.
+    """
     direct = jnp.log(jnp.asarray(value, dtype=jnp.float32))
     narrowed = float(np.float32(value))
     if narrowed > 0.0:
@@ -624,7 +629,7 @@ def create_tdidbd_state(
     Returns:
         Initial TD-IDBD state
     """
-    log_step_size = _float32_log(initial_step_size)
+    log_step_size = finite_float32_log(initial_step_size)
     return TDIDBDState(
         log_step_sizes=jnp.full(feature_dim, log_step_size, dtype=jnp.float32),
         eligibility_traces=jnp.zeros(feature_dim, dtype=jnp.float32),
@@ -657,15 +662,16 @@ def create_autotdidbd_state(
     Returns:
         Initial AutoTDIDBD state
     """
+    log_step_size = finite_float32_log(initial_step_size)
     return AutoTDIDBDState(
-        log_step_sizes=jnp.full(feature_dim, jnp.log(initial_step_size), dtype=jnp.float32),
+        log_step_sizes=jnp.full(feature_dim, log_step_size, dtype=jnp.float32),
         eligibility_traces=jnp.zeros(feature_dim, dtype=jnp.float32),
         h_traces=jnp.zeros(feature_dim, dtype=jnp.float32),
         normalizers=jnp.ones(feature_dim, dtype=jnp.float32),
         meta_step_size=jnp.array(meta_step_size, dtype=jnp.float32),
         trace_decay=jnp.array(trace_decay, dtype=jnp.float32),
         normalizer_decay=jnp.array(normalizer_decay, dtype=jnp.float32),
-        bias_log_step_size=jnp.array(jnp.log(initial_step_size), dtype=jnp.float32),
+        bias_log_step_size=jnp.array(log_step_size, dtype=jnp.float32),
         bias_eligibility_trace=jnp.array(0.0, dtype=jnp.float32),
         bias_h_trace=jnp.array(0.0, dtype=jnp.float32),
         bias_normalizer=jnp.array(1.0, dtype=jnp.float32),
