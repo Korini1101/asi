@@ -710,8 +710,8 @@ def _score_planning_actions(
 
     def predict_action(action: Array) -> Array:
         prediction = model.predict(model_state, anchor_observation, action)
-        transition_magnitude = jnp.sqrt(
-            jnp.mean((prediction.next_observation - anchor_observation) ** 2)
+        transition_magnitude = _root_mean_square(
+            prediction.next_observation - anchor_observation
         )
         reward_priority = jnp.abs(prediction.reward)
         return (
@@ -723,6 +723,36 @@ def _score_planning_actions(
     priorities = jax.vmap(predict_action)(actions)
     selected = jnp.argmax(priorities).astype(jnp.int32)
     return selected, priorities[selected]
+
+
+def _root_mean_square(values: Array) -> Array:
+    """Return an RMS without overflowing solely in the square reduction."""
+    direct = jnp.sqrt(jnp.mean(values * values))
+    scale = jnp.max(jnp.abs(values))
+    safe_scale = jnp.where(scale > 0.0, scale, jnp.ones_like(scale))
+    scaled = values / safe_scale
+    stable = scale * jnp.sqrt(jnp.mean(scaled * scaled))
+    return jnp.where(jnp.isfinite(direct), direct, stable)
+
+
+def _divide_by_one_plus_mean_square(
+    numerator: Array | float,
+    values: Array,
+    *,
+    axis: int,
+) -> Array:
+    """Evaluate ``numerator / (1 + mean(values**2))`` at finite input range."""
+    direct_distance = jnp.mean(values * values, axis=axis)
+    direct = numerator / (1.0 + direct_distance)
+    scale = jnp.max(jnp.abs(values), axis=axis)
+    safe_scale = jnp.where(scale > 0.0, scale, jnp.ones_like(scale))
+    normalized = values / jnp.expand_dims(safe_scale, axis=axis)
+    normalized_mean_square = jnp.mean(normalized * normalized, axis=axis)
+    inverse_scale = 1.0 / safe_scale
+    stable = (numerator * inverse_scale) / (
+        inverse_scale + scale * normalized_mean_square
+    )
+    return jnp.where(jnp.isfinite(direct_distance), direct, stable)
 
 
 def _store_real_transition(
@@ -796,8 +826,9 @@ def _select_planning_anchor(
         memory_utilities + 0.1 * memory_priorities,
         -jnp.inf,
     )
-    predecessor_distance = jnp.mean(
-        (memory_next_observations - reference_observation[None, :]) ** 2,
+    predecessor_similarity = _divide_by_one_plus_mean_square(
+        1.0,
+        memory_next_observations - reference_observation[None, :],
         axis=1,
     )
     # 1/(1 + d) is a bounded similarity kernel on the mean-squared distance
@@ -806,7 +837,7 @@ def _select_planning_anchor(
     # is unavailable), maximal for transitions that lead exactly here.
     predecessor_scores = jnp.where(
         valid,
-        memory_priorities + 1.0 / (1.0 + predecessor_distance),
+        memory_priorities + predecessor_similarity,
         -jnp.inf,
     )
     priority_scores = (
@@ -898,16 +929,16 @@ def _propagate_predecessor_priorities(
     """
     memory_size = memory_priorities.shape[0]
     valid = jnp.arange(memory_size, dtype=jnp.int32) < memory_count
-    predecessor_distance = jnp.mean(
-        (memory_next_observations - anchor_observation[None, :]) ** 2,
-        axis=1,
-    )
     scale = jnp.asarray(propagation_scale, dtype=jnp.float32)
     magnitude = jnp.abs(td_error)
-    # Keep the original (scale * |td|) / (1 + d) association so a non-zero
-    # scale stays bit-exact; only the zero-scale lane is short-circuited.
+    # Keep the original (scale * |td|) / (1 + d) association on finite direct
+    # distances, while still short-circuiting the disabled zero-scale lane.
     scaled = jnp.where(scale == 0.0, jnp.zeros_like(magnitude), scale * magnitude)
-    propagated = scaled / (1.0 + predecessor_distance)
+    propagated = _divide_by_one_plus_mean_square(
+        scaled,
+        memory_next_observations - anchor_observation[None, :],
+        axis=1,
+    )
     return jnp.where(valid, jnp.maximum(memory_priorities, propagated), memory_priorities)
 
 

@@ -25,7 +25,9 @@ from alberta_framework.steps.step7 import (
     Step7DynaState,
     Step7DynaUpdateResult,
     Step7SmokeResult,
+    _propagate_predecessor_priorities,
     _score_planning_actions,
+    _select_planning_anchor,
     init_step7_state,
     make_step7_components,
     run_step7_scan,
@@ -631,6 +633,89 @@ class TestScorePlanningActions:
             jnp.mean((prediction.next_observation - anchor) ** 2)
         )
         assert float(score) == pytest.approx(float(expected), rel=1e-6)
+
+    def test_surprise_strategy_keeps_finite_large_transition_score(self) -> None:
+        cfg = Step7DynaConfig(
+            control=Step6DifferentialSARSAConfig(n_actions=N_ACTIONS),
+            world_model=Step8WorldModelConfig(
+                observation_dim=OBS_DIM,
+                n_actions=N_ACTIONS,
+                hidden_sizes=(),
+                use_layer_norm=False,
+            ),
+        )
+        _, model = make_step7_components(cfg)
+        model_state = model.init(jr.key(12))
+        learner_state = model_state.learner_state
+        heads = learner_state.head_params
+        large = jnp.asarray(1e19, dtype=jnp.float32)
+        biases = (jnp.zeros_like(heads.biases[0]),) + tuple(
+            jnp.full_like(bias, large) for bias in heads.biases[1:]
+        )
+        model_state = model_state.replace(
+            learner_state=learner_state.replace(
+                head_params=heads.replace(
+                    weights=tuple(jnp.zeros_like(weight) for weight in heads.weights),
+                    biases=biases,
+                )
+            )
+        )
+        anchor = jnp.zeros((OBS_DIM,), dtype=jnp.float32)
+        residual = model.predict(
+            model_state, anchor, jnp.asarray(0, dtype=jnp.int32)
+        ).next_observation
+
+        assert bool(jnp.all(jnp.isfinite(residual * residual)))
+        assert bool(jnp.isinf(jnp.mean(residual * residual)))
+
+        _, score = _score_planning_actions(
+            model, model_state, anchor, "surprise", N_ACTIONS
+        )
+
+        assert bool(jnp.isfinite(score))
+        assert float(score) == pytest.approx(1e19, rel=1e-6)
+
+
+def test_predecessor_selection_distinguishes_large_finite_distances() -> None:
+    distance_dim = 8
+    farther = jnp.full((distance_dim,), 9e18, dtype=jnp.float32)
+    nearer = jnp.full((distance_dim,), 7e18, dtype=jnp.float32)
+    next_observations = jnp.stack((farther, nearer))
+    zeros = jnp.zeros((2,), dtype=jnp.float32)
+
+    _, index, score = _select_planning_anchor(
+        jnp.zeros((2, distance_dim), dtype=jnp.float32),
+        zeros,
+        next_observations,
+        zeros,
+        zeros,
+        jnp.asarray(2, dtype=jnp.int32),
+        jnp.zeros((distance_dim,), dtype=jnp.float32),
+        jr.key(13),
+        "predecessor",
+    )
+
+    assert int(index) == 1
+    assert float(score) > 0.0
+
+
+def test_predecessor_propagation_retains_large_finite_similarity() -> None:
+    distance_dim = 8
+    farther = jnp.full((distance_dim,), 9e18, dtype=jnp.float32)
+    nearer = jnp.full((distance_dim,), 7e18, dtype=jnp.float32)
+
+    priorities = _propagate_predecessor_priorities(
+        jnp.stack((farther, nearer)),
+        jnp.zeros((2,), dtype=jnp.float32),
+        jnp.asarray(2, dtype=jnp.int32),
+        jnp.zeros((distance_dim,), dtype=jnp.float32),
+        jnp.asarray(1.0, dtype=jnp.float32),
+        1.0,
+    )
+
+    assert bool(jnp.all(jnp.isfinite(priorities)))
+    assert float(priorities[0]) > 0.0
+    assert float(priorities[1]) > float(priorities[0])
 
 
 def test_step7_dyna_rejects_float32_underflow_for_positive_fields() -> None:
