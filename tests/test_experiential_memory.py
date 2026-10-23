@@ -824,3 +824,29 @@ def test_dynamic_state_corruption_makes_query_abstain_and_mutations_exact_noops(
     compiled_result = compiled_step(corrupt)
     _assert_trees_equal(compiled_result.state, corrupt)
     assert not bool(compiled_result.retrieval.state_valid)
+
+
+@pytest.mark.parametrize(
+    "counter_name",
+    ("query_count", "write_count", "rejected_write_count"),
+)
+def test_lifetime_counters_cannot_precede_the_step_clock(counter_name: str) -> None:
+    memory = ExperientialMemory(_config())
+    original = memory.init()
+    corrupt = original.replace(
+        **{counter_name: jnp.asarray(1, dtype=jnp.int32)}
+    )
+    query_args = (
+        jnp.zeros((2,), dtype=jnp.float32),
+        jnp.asarray(1, dtype=jnp.int32),
+        jnp.asarray(0.0, dtype=jnp.float32),
+        jnp.asarray(True),
+    )
+
+    retrieval = memory.query(corrupt, *query_args)
+    write = memory.write(corrupt, _entry(1))
+
+    assert not bool(retrieval.state_valid)
+    assert not bool(retrieval.accepted)
+    assert not bool(write.wrote)
+    _assert_trees_equal(write.state, corrupt)
