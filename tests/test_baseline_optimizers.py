@@ -17,8 +17,10 @@ values so serialization bugs cannot hide behind defaults.
 """
 
 import math
+from typing import Any
 
 import chex
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -34,6 +36,69 @@ from alberta_framework.core.baseline_optimizers import (
     RMSpropParamState,
     RMSpropState,
 )
+
+
+@pytest.mark.parametrize("compiled", [False, True])
+@pytest.mark.parametrize(
+    ("optimizer", "state_field", "metric_names"),
+    [
+        (Adam(beta1=0.0, beta2=0.0), "v", ("mean_v",)),
+        (RMSprop(decay=0.0), "v", ("mean_v",)),
+        (
+            NADALINE(decay=0.0),
+            "feature_second_moment",
+            ("mean_second_moment", "mean_denom"),
+        ),
+    ],
+)
+def test_finite_wide_moment_mean_does_not_reject_update(
+    compiled: bool,
+    optimizer: Any,
+    state_field: str,
+    metric_names: tuple[str, ...],
+) -> None:
+    """Finite per-feature moments must not overflow only while averaging."""
+    state = optimizer.init(2)
+    error = jnp.asarray(1.0, dtype=jnp.float32)
+    observation = jnp.full((2,), 1.5e19, dtype=jnp.float32)
+    update = jax.jit(optimizer.update) if compiled else optimizer.update
+
+    result = update(state, error, observation)
+
+    expected_moment = float(jnp.float32(1.5e19) ** 2)
+    assert bool(result.update_applied)
+    chex.assert_tree_all_finite(result)
+    chex.assert_trees_all_close(
+        getattr(result.new_state, state_field),
+        jnp.full((2,), expected_moment, dtype=jnp.float32),
+        rtol=1e-6,
+    )
+    for metric_name in metric_names:
+        assert float(result.metrics[metric_name]) == pytest.approx(
+            expected_moment, rel=1e-6
+        )
+
+
+@pytest.mark.parametrize("compiled", [False, True])
+def test_adam_finite_cancelling_first_moment_mean_is_order_independent(
+    compiled: bool,
+) -> None:
+    """A finite signed mean must not depend on overflowing reduction order."""
+    optimizer = Adam(step_size=0.001, beta1=0.5, beta2=0.0, eps=1e30)
+    state = optimizer.init(4).replace(
+        m=jnp.asarray([3e38, 3e38, 3e38, -3e38], dtype=jnp.float32)
+    )
+    update = jax.jit(optimizer.update) if compiled else optimizer.update
+
+    result = update(
+        state,
+        jnp.asarray(0.0, dtype=jnp.float32),
+        jnp.zeros((4,), dtype=jnp.float32),
+    )
+
+    assert bool(result.update_applied)
+    chex.assert_tree_all_finite(result)
+    assert float(result.metrics["mean_m"]) == pytest.approx(7.5e37, rel=1e-6)
 
 # =============================================================================
 # AdaGain

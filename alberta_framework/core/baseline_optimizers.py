@@ -134,8 +134,10 @@ def _preflight_adam_resources(n: int) -> None:
         # Complete named logical envelope: source moments, observation and
         # gradient, proposed moments, bias-corrected moments, weight delta,
         # checked moments, selected result moments, and neutral output.
-        update_vectors=14,
-        update_scalars=8,
+        # The two diagnostic means each retain one rescaled vector and
+        # three scale/reduction scalars on their overflow fallback path.
+        update_vectors=16,
+        update_scalars=14,
     )
 
 
@@ -174,8 +176,8 @@ def _preflight_rmsprop_resources(n: int) -> None:
         n,
         persistent_vectors=1,
         persistent_scalars=4,
-        update_vectors=8,
-        update_scalars=6,
+        update_vectors=9,
+        update_scalars=9,
     )
 
 
@@ -185,8 +187,8 @@ def _preflight_nadaline_resources(n: int) -> None:
         n,
         persistent_vectors=1,
         persistent_scalars=3,
-        update_vectors=9,
-        update_scalars=6,
+        update_vectors=11,
+        update_scalars=12,
     )
 
 
@@ -204,6 +206,17 @@ def _zero_if_disabled(configured_scale: float, scale: Array, value: Array) -> Ar
     if configured_scale == 0.0:
         return jnp.where(scale == 0.0, jnp.zeros_like(value), value)
     return value
+
+
+def _finite_mean(value: Array) -> Array:
+    """Preserve the ordinary mean unless only its reduction overflowed."""
+    ordinary = jnp.mean(value)
+    scale = jnp.max(jnp.abs(value))
+    _, exponent = jnp.frexp(scale)
+    scaled = jnp.ldexp(value, -exponent)
+    scaled_mean = jnp.clip(jnp.mean(scaled), -1.0, 1.0)
+    stable = jnp.ldexp(scaled_mean, exponent)
+    return jnp.where(jnp.isfinite(ordinary), ordinary, stable)
 
 
 # =============================================================================
@@ -824,8 +837,8 @@ class Adam(Optimizer[Any]):
         )
         candidate_metrics = {
             "step_size": state.step_size,
-            "mean_m": jnp.mean(new_m),
-            "mean_v": jnp.mean(new_v),
+            "mean_m": _finite_mean(new_m),
+            "mean_v": _finite_mean(new_v),
             "t": new_t,
         }
 
@@ -1078,7 +1091,7 @@ class RMSprop(Optimizer[Any]):
         )
         candidate_metrics = {
             "step_size": state.step_size,
-            "mean_v": jnp.mean(new_v),
+            "mean_v": _finite_mean(new_v),
         }
 
         checked_state = state.replace(  # type: ignore[attr-defined]
@@ -1218,8 +1231,8 @@ class NADALINE(Optimizer[Any]):
         )
         candidate_metrics = {
             "step_size": state.step_size,
-            "mean_second_moment": jnp.mean(new_second_moment),
-            "mean_denom": jnp.mean(denom),
+            "mean_second_moment": _finite_mean(new_second_moment),
+            "mean_denom": _finite_mean(denom),
         }
 
         checked_state = state.replace(  # type: ignore[attr-defined]
