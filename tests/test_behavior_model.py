@@ -241,8 +241,8 @@ def test_input_loss_gradient_verdict_is_consistent_eager_jit_and_vmap() -> None:
     chex.assert_trees_all_close(batched_committed[1], builder_state)
 
 
-def test_input_loss_gradient_rejects_finite_gradient_with_overflowed_norm() -> None:
-    """The verdict covers every numeric field, including derived diagnostics."""
+def test_input_loss_gradient_rejects_finite_gradient_with_unrepresentable_norm() -> None:
+    """A true norm above float32 range remains invalid after safe reduction."""
     model = BehaviorModel(BehaviorModelConfig(n_actions=2, step_size=0.1))
     state = model.init(feature_dim=2, key=jax.random.key(2))
     maximum = jnp.finfo(jnp.float32).max
@@ -254,11 +254,17 @@ def test_input_loss_gradient_rejects_finite_gradient_with_overflowed_norm() -> N
         bias=jnp.zeros((2,), dtype=jnp.float32),
     )
 
-    result = model.input_loss_gradient(
-        state,
-        jnp.zeros((2,), dtype=jnp.float32),
-        jnp.array(0, dtype=jnp.int32),
+    observation = jnp.zeros((2,), dtype=jnp.float32)
+    action = jnp.array(0, dtype=jnp.int32)
+    probabilities = jax.nn.softmax(state.weights @ observation + state.bias)
+    raw_gradient = state.weights.T @ (
+        probabilities - jax.nn.one_hot(action, 2, dtype=jnp.float32)
     )
+
+    assert bool(jnp.all(jnp.isfinite(raw_gradient)))
+    assert np.linalg.norm(np.asarray(raw_gradient, dtype=np.float64)) > float(maximum)
+
+    result = model.input_loss_gradient(state, observation, action)
 
     assert not bool(result.valid)
     chex.assert_tree_all_finite(result)
