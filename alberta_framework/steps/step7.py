@@ -673,7 +673,12 @@ def _update_control_with_linear_rng(
     discount: Array | float = 1.0,
 ) -> DifferentialSARSAUpdateResult:
     """Apply a control backup while advancing its RNG on rejection."""
-    next_action, next_key = agent.select_action(state, next_observation)
+    # This caller owns the linear reservation contract. Action selection is
+    # fail-closed and preserves its key when policy inputs are invalid, while
+    # every attempted Step 7 control transaction must still consume the
+    # randomness reserved before planning begins.
+    next_key, _, _, _ = jr.split(state.rng_key, 4)
+    next_action, _ = agent.select_action(state, next_observation)
     advanced_state = cast(
         DifferentialSARSAState,
         state.replace(rng_key=next_key),  # type: ignore[attr-defined]
