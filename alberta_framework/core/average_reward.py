@@ -369,9 +369,15 @@ class DifferentialTDConfig:
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> DifferentialTDConfig:
         """Reconstruct a config from :meth:`to_config` output."""
-        config = dict(config)
-        config.pop("type", None)
-        return cls(**config)
+        if type(config) is not dict:
+            raise ValueError("differential TD config must be an actual dict")
+        payload = dict(config)
+        expected = {field.name for field in dataclasses.fields(cls)} | {"type"}
+        if set(payload) != expected:
+            raise ValueError("differential TD config fields do not match its schema")
+        if payload.pop("type") != "DifferentialTDConfig":
+            raise ValueError("differential TD config type is invalid")
+        return cls(**payload)
 
 
 @chex.dataclass(frozen=True)
@@ -483,9 +489,15 @@ class DifferentialGTDConfig:
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> DifferentialGTDConfig:
         """Reconstruct a config from :meth:`to_config` output."""
-        config = dict(config)
-        config.pop("type", None)
-        return cls(**config)
+        if type(config) is not dict:
+            raise ValueError("differential GTD config must be an actual dict")
+        payload = dict(config)
+        expected = {field.name for field in dataclasses.fields(cls)} | {"type"}
+        if set(payload) != expected:
+            raise ValueError("differential GTD config fields do not match its schema")
+        if payload.pop("type") != "DifferentialGTDConfig":
+            raise ValueError("differential GTD config type is invalid")
+        return cls(**payload)
 
 
 @chex.dataclass(frozen=True)
@@ -1317,9 +1329,17 @@ class DifferentialGTDLearner:
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> DifferentialGTDLearner:
         """Reconstruct a learner from :meth:`to_config` output."""
-        config = dict(config)
-        config.pop("type", None)
-        return cls(DifferentialGTDConfig.from_config(config["config"]))
+        if type(config) is not dict:
+            raise ValueError("differential GTD learner config must be an actual dict")
+        payload = dict(config)
+        if set(payload) != {"type", "config"}:
+            raise ValueError("differential GTD learner config fields do not match its schema")
+        if payload["type"] != "DifferentialGTDLearner":
+            raise ValueError("differential GTD learner config type is invalid")
+        nested = payload["config"]
+        if type(nested) is not dict:
+            raise ValueError("differential GTD nested config must be an actual dict")
+        return cls(DifferentialGTDConfig.from_config(nested))
 
     def init(
         self,
@@ -1482,9 +1502,17 @@ class DifferentialTDLearner:
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> DifferentialTDLearner:
         """Reconstruct a learner from :meth:`to_config` output."""
-        config = dict(config)
-        config.pop("type", None)
-        return cls(DifferentialTDConfig.from_config(config["config"]))
+        if type(config) is not dict:
+            raise ValueError("differential TD learner config must be an actual dict")
+        payload = dict(config)
+        if set(payload) != {"type", "config"}:
+            raise ValueError("differential TD learner config fields do not match its schema")
+        if payload["type"] != "DifferentialTDLearner":
+            raise ValueError("differential TD learner config type is invalid")
+        nested = payload["config"]
+        if type(nested) is not dict:
+            raise ValueError("differential TD nested config must be an actual dict")
+        return cls(DifferentialTDConfig.from_config(nested))
 
     def init(
         self,
