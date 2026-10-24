@@ -537,13 +537,16 @@ def nap_project(weights: Array, *, initial_norm: float, enabled: bool = True) ->
     scaled_norm = jnp.linalg.norm(scaled.astype(norm_dtype)).astype(weights.dtype)
     overflow_safe = jnp.where(
         scaled_norm > 0,
-        scaled * (target_norm / scaled_norm),
+        (scaled / scaled_norm) * target_norm,
         weights,
     )
-    direct_lost_scale = (target_norm > 0) & (norm > 0) & (normalization == 0)
+    direct_lost_scale = (target_norm > 0) & (norm > 0) & (
+        (normalization == 0) | ~jnp.isfinite(normalization)
+    )
     direct_lost_norm = (norm == 0) & (maximum > 0)
+    direct_is_finite = jnp.all(jnp.isfinite(direct))
     candidate = jnp.where(
-        jnp.isfinite(norm) & ~direct_lost_scale & ~direct_lost_norm,
+        jnp.isfinite(norm) & direct_is_finite & ~direct_lost_scale & ~direct_lost_norm,
         direct,
         overflow_safe,
     )
