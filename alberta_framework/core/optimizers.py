@@ -15,7 +15,7 @@ References:
 
 import operator
 from abc import ABC, abstractmethod
-from math import prod
+from math import log, prod
 from typing import Any, SupportsIndex, cast
 
 import chex
@@ -114,6 +114,13 @@ def _validated_idbd_step_size(
     if numerator != 0 and narrowed == 0.0:
         raise ValueError(f"{name} must remain nonzero once narrowed to float32")
     return stored
+
+
+def _finite_idbd_log_step_size(value: float) -> Array:
+    """Keep the float32 log finite when an accepted step size is subnormal."""
+    direct = jnp.log(jnp.asarray(value, dtype=jnp.float32))
+    stable = jnp.asarray(log(float(np.float32(value))), dtype=jnp.float32)
+    return jnp.where(jnp.isfinite(direct), direct, stable)
 
 
 # =============================================================================
@@ -800,10 +807,9 @@ class IDBD(Optimizer[IDBDState]):
         _require_float32_update_working_set(
             "IDBD update working set", 18 * feature_dim + 8
         )
+        log_step_size = _finite_idbd_log_step_size(self._initial_step_size)
         return IDBDState(
-            log_step_sizes=jnp.full(
-                feature_dim, jnp.log(self._initial_step_size), dtype=jnp.float32
-            ),
+            log_step_sizes=jnp.full(feature_dim, log_step_size, dtype=jnp.float32),
             traces=jnp.zeros(feature_dim, dtype=jnp.float32),
             meta_step_size=jnp.array(self._meta_step_size, dtype=jnp.float32),
             bias_step_size=jnp.array(self._initial_step_size, dtype=jnp.float32),
@@ -823,8 +829,9 @@ class IDBD(Optimizer[IDBDState]):
         n = _shape_size(shape)
         _require_float32_state("IDBD parameter state", 2 * n + 1)
         _require_float32_update_working_set("IDBD update working set", 18 * n + 8)
+        log_step_size = _finite_idbd_log_step_size(self._initial_step_size)
         return IDBDParamState(
-            log_step_sizes=jnp.full(shape, jnp.log(self._initial_step_size), dtype=jnp.float32),
+            log_step_sizes=jnp.full(shape, log_step_size, dtype=jnp.float32),
             traces=jnp.zeros(shape, dtype=jnp.float32),
             meta_step_size=jnp.array(self._meta_step_size, dtype=jnp.float32),
         )
