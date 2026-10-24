@@ -141,6 +141,18 @@ def _validated_float32_scalar(
     return stored
 
 
+def _finite_l2_norm(values: Array) -> Array:
+    """Preserve a representable norm when only its square sum overflows."""
+
+    direct = jnp.linalg.norm(values)
+    scale = jnp.max(jnp.abs(values))
+    safe_scale = jnp.where(scale > 0.0, scale, 1.0)
+    scaled = values / safe_scale
+    stable = scale * jnp.sqrt(jnp.sum(scaled * scaled))
+    reduction_only_overflow = ~jnp.isfinite(direct) & jnp.all(jnp.isfinite(values))
+    return jnp.where(reduction_only_overflow, stable, direct)
+
+
 def _selector_state_nbytes(n_candidates: int) -> int:
     return 12 * n_candidates + 4
 
@@ -3241,7 +3253,7 @@ class CompositionalFeatureLearner:
                 + jnp.sum(jnp.abs(candidate_output_delta))
                 + jnp.sum(jnp.abs(candidate_theta_delta))
             )
-            err_norm = jnp.linalg.norm(errors)
+            err_norm = _finite_l2_norm(errors)
             bound_magnitude = self._obgd_kappa * jnp.maximum(err_norm, 1.0) * total_step
             bounding_scale = 1.0 / jnp.maximum(bound_magnitude, 1.0)
             output_delta = bounding_scale * output_delta
@@ -4614,7 +4626,14 @@ class CompositionalFeatureLearner:
             uptime_s=state.uptime_s,
         )
 
-        loss = jnp.sum(errors**2) / active_count
+        squared_errors = errors**2
+        loss = jnp.sum(squared_errors) / active_count
+        reduction_only_overflow = jnp.isinf(loss) & jnp.all(jnp.isfinite(squared_errors))
+        loss = jnp.where(
+            reduction_only_overflow,
+            jnp.sum(squared_errors / active_count),
+            loss,
+        )
         mean_abs_error = jnp.sum(jnp.abs(errors)) / active_count
         max_candidate_utility = (
             jnp.max(ranking_candidate_utilities)
