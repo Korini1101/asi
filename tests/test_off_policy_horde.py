@@ -56,6 +56,24 @@ def test_init_predict_and_config_roundtrip() -> None:
     assert restored.to_config() == config
 
 
+@pytest.mark.parametrize("mutation", ["missing_ratio_clip", "wrong_type"])
+def test_config_adoption_requires_exact_serialized_schema(mutation: str) -> None:
+    learner = OffPolicyHordeLearner(
+        _spec(),
+        hidden_sizes=(8,),
+        optimizer=LMS(step_size=0.03),
+        ratio_clip=2.0,
+    )
+    config = learner.to_config()
+    if mutation == "missing_ratio_clip":
+        config.pop("ratio_clip")
+    else:
+        config["type"] = "MultiHeadMLPLearner"
+
+    with pytest.raises(ValueError, match="OffPolicyHordeLearner config"):
+        OffPolicyHordeLearner.from_config(config)
+
+
 def test_invalid_clips_raise() -> None:
     with pytest.raises(ValueError, match="ratio_clip"):
         OffPolicyHordeLearner(_spec(), ratio_clip=0.0)
