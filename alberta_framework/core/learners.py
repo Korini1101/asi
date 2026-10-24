@@ -2227,7 +2227,14 @@ class TrueOnlineTDLearner:
 
         value = jnp.squeeze(self.predict(state, observation))
         next_value = jnp.squeeze(self.predict(state, next_observation))
-        td_error = jnp.squeeze(reward) + _skip_zero_scale(gamma_scalar, next_value) - value
+        # Keep ordinary rounding. Recover only an overflowing partial sum
+        # whose cancellation against V(s) is a finite TD error.
+        reward_scalar = jnp.squeeze(reward)
+        bootstrap = _skip_zero_scale(gamma_scalar, next_value)
+        direct_partial = reward_scalar + bootstrap
+        direct_td = direct_partial - value
+        recovered_td = reward_scalar + (bootstrap - value)
+        td_error = jnp.where(jnp.isfinite(direct_partial), direct_td, recovered_td)
 
         trace_dot = jnp.dot(state.eligibility_traces, observation)
         trace_dot = trace_dot + state.bias_eligibility_trace
@@ -2246,17 +2253,29 @@ class TrueOnlineTDLearner:
         new_bias_trace = _skip_zero_scale(decay_scale, state.bias_eligibility_trace) + trace_scale
 
         correction = value - state.v_old
-        update_scale = alpha * (td_error + correction)
-        new_weights = (
+        # Direct form: alpha * (delta + correction) * e - alpha * correction * phi.
+        # When delta and the correction are both huge, that sum overflows even
+        # though alpha * delta * e + alpha * correction * (e - phi) is finite.
+        direct_scale = alpha * (td_error + correction)
+        direct_weights = (
             state.weights
-            + update_scale * new_traces
+            + direct_scale * new_traces
             - alpha * correction * observation
         )
-        new_bias = (
-            state.bias
-            + update_scale * new_bias_trace
-            - alpha * correction
+        direct_bias = state.bias + direct_scale * new_bias_trace - alpha * correction
+        recovered_weights = state.weights + (alpha * td_error) * new_traces + (
+            alpha * correction
+        ) * (new_traces - observation)
+        recovered_bias = state.bias + (alpha * td_error) * new_bias_trace + (
+            alpha * correction
+        ) * (new_bias_trace - 1.0)
+        direct_update_finite = (
+            jnp.isfinite(direct_scale)
+            & jnp.all(jnp.isfinite(direct_weights))
+            & jnp.isfinite(direct_bias)
         )
+        new_weights = jnp.where(direct_update_finite, direct_weights, recovered_weights)
+        new_bias = jnp.where(direct_update_finite, direct_bias, recovered_bias)
 
         terminal = gamma_scalar == 0.0
         stored_traces = jnp.where(terminal, jnp.zeros_like(new_traces), new_traces)
