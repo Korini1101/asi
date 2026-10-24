@@ -837,6 +837,23 @@ class AssociativeMemoryLearner:
         unit_evidence = jnp.clip(unit_evidence, -scaled_bound, scaled_bound)
         return jnp.ldexp(unit_evidence, scale_exponent), total_weight
 
+    def _combined_logits(self, prior: Array, evidence: Array) -> Array:
+        """Combine finite score sources in a softmax-equivalent finite frame."""
+        prior_logits = jnp.asarray(0.05, dtype=jnp.float32) * prior
+        evidence_logits = self._config.logit_scale * evidence
+        centered_prior = prior_logits - jax.lax.stop_gradient(jnp.max(prior_logits))
+        centered_evidence = evidence_logits - jax.lax.stop_gradient(
+            jnp.max(evidence_logits)
+        )
+        prior_gap = -centered_prior
+        evidence_gap = -centered_evidence
+        larger_gap = jnp.maximum(prior_gap, evidence_gap)
+        smaller_gap = jnp.minimum(prior_gap, evidence_gap)
+        ceiling = jnp.asarray(np.finfo(np.float32).max, dtype=jnp.float32)
+        combined_gap = larger_gap + jnp.minimum(smaller_gap, ceiling - larger_gap)
+        combined_gap = combined_gap - jax.lax.stop_gradient(jnp.min(combined_gap))
+        return -combined_gap
+
     def _weighted_feature_loss(self, row_values: Array, weights: Array, label: Array) -> Array:
         evidence, total_weight = self._weighted_evidence(row_values, weights)
         # Center on both sides of the scale, as in the per-row loss below;
@@ -881,8 +898,7 @@ class AssociativeMemoryLearner:
         # weight normalization applies to the evidence sum alone, so the
         # prior's coefficient stays fixed instead of scaling with
         # ``1 / total_weight``.
-        scaled_evidence = self._config.logit_scale * evidence
-        logits = 0.05 * state.prior + scaled_evidence
+        logits = self._combined_logits(state.prior, evidence)
         probabilities = _softmax(logits)
         return AssociativeMemoryPrediction(
             logits=logits,
