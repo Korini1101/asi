@@ -540,8 +540,9 @@ def nap_project(weights: Array, *, initial_norm: float, enabled: bool = True) ->
         weights,
     )
     direct_lost_scale = (target_norm > 0) & (norm > 0) & (normalization == 0)
+    direct_lost_norm = (norm == 0) & (maximum > 0)
     candidate = jnp.where(
-        jnp.isfinite(norm) & ~direct_lost_scale,
+        jnp.isfinite(norm) & ~direct_lost_scale & ~direct_lost_norm,
         direct,
         overflow_safe,
     )

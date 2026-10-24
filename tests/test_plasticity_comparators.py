@@ -150,6 +150,22 @@ def test_nap_projection_preserves_radius_when_reciprocal_underflows() -> None:
     )
 
 
+def test_nap_projection_preserves_radius_when_direct_norm_underflows() -> None:
+    weights = jnp.asarray([1.0e-30, 1.0e-30], dtype=jnp.float32)
+    assert bool(jnp.any(weights != 0))
+    assert float(jnp.linalg.norm(weights)) == 0.0
+
+    eager = nap_project(weights, initial_norm=3.0)
+    compiled = jax.jit(lambda value: nap_project(value, initial_norm=3.0))(weights)
+
+    for projected in (eager, compiled):
+        assert np.linalg.norm(np.asarray(projected, dtype=np.float64)) == pytest.approx(
+            3.0,
+            rel=1e-6,
+        )
+    assert bool(jnp.all(nap_project(weights, initial_norm=0.0) == 0))
+
+
 def test_c_chain_churn_loss_and_off_reduction() -> None:
     before = jnp.asarray([1.0, 2.0])
     after = jnp.asarray([2.0, 4.0])
