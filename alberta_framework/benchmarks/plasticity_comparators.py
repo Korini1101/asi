@@ -526,14 +526,14 @@ def nap_project(weights: Array, *, initial_norm: float, enabled: bool = True) ->
     weights = _floating_array("weights", weights)
     if not enabled:
         return weights
-    norm = jnp.linalg.norm(weights)
+    norm_dtype = jnp.promote_types(weights.dtype, jnp.float32)
+    norm = jnp.linalg.norm(weights.astype(norm_dtype)).astype(weights.dtype)
     target_norm = jnp.asarray(initial_norm, dtype=weights.dtype)
     normalization = target_norm / norm
     direct = jnp.where(norm > 0, weights * normalization, weights)
     maximum = jnp.max(jnp.abs(weights))
     _, exponent = jnp.frexp(maximum)
     scaled = jnp.ldexp(weights, -exponent)
-    norm_dtype = jnp.promote_types(weights.dtype, jnp.float32)
     scaled_norm = jnp.linalg.norm(scaled.astype(norm_dtype)).astype(weights.dtype)
     overflow_safe = jnp.where(
         scaled_norm > 0,

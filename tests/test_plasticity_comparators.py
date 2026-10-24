@@ -215,6 +215,21 @@ def test_nap_projection_uses_wide_accumulation_for_large_low_precision_array() -
     )
 
 
+def test_nap_projection_uses_wide_direct_norm_for_low_precision_array() -> None:
+    weights = jnp.asarray([0.001, 0.001], dtype=jnp.float16)
+    assert bool(jnp.isfinite(jnp.linalg.norm(weights)))
+
+    eager = nap_project(weights, initial_norm=1.0)
+    compiled = jax.jit(lambda value: nap_project(value, initial_norm=1.0))(weights)
+
+    for projected in (eager, compiled):
+        assert projected.dtype == weights.dtype
+        assert np.linalg.norm(np.asarray(projected, dtype=np.float64)) == pytest.approx(
+            1.0,
+            rel=2e-3,
+        )
+
+
 def test_c_chain_churn_loss_and_off_reduction() -> None:
     before = jnp.asarray([1.0, 2.0])
     after = jnp.asarray([2.0, 4.0])
