@@ -142,7 +142,10 @@ def test_differential_gtd_infinite_reward_does_not_poison_weights() -> None:
     assert bool(recovered.update_applied)
 
 
-def test_differential_gtd_reports_finite_large_secondary_rms() -> None:
+@pytest.mark.parametrize("secondary_weight", [7e18, 1e38, 3e38])
+def test_differential_gtd_reports_finite_large_secondary_rms(
+    secondary_weight: float,
+) -> None:
     learner = DifferentialGTDLearner(
         DifferentialGTDConfig(
             value_step_size=0.0,
@@ -151,7 +154,7 @@ def test_differential_gtd_reports_finite_large_secondary_rms() -> None:
         )
     )
     state = learner.init(8).replace(
-        secondary_weights=jnp.full((8,), 7e18, dtype=jnp.float32)
+        secondary_weights=jnp.full((8,), secondary_weight, dtype=jnp.float32)
     )
     observation = jnp.zeros((8,), dtype=jnp.float32)
 
@@ -165,7 +168,7 @@ def test_differential_gtd_reports_finite_large_secondary_rms() -> None:
 
     assert bool(result.update_applied)
     assert bool(jnp.isfinite(result.metrics[5]))
-    assert float(result.metrics[5]) == pytest.approx(7e18, rel=1e-6)
+    assert float(result.metrics[5]) == pytest.approx(secondary_weight, rel=1e-6)
 
 
 def test_average_reward_horde_infinite_cumulant_does_not_poison_rbar() -> None:

@@ -84,9 +84,9 @@ def _root_mean_square(values: Array) -> Array:
     """Keep a representable RMS finite when only its square reduction overflows."""
     direct = jnp.sqrt(jnp.mean(values * values))
     scale = jnp.max(jnp.abs(values))
-    safe_scale = jnp.where(scale > 0.0, scale, jnp.ones_like(scale))
-    normalized = values / safe_scale
-    stable = scale * jnp.sqrt(jnp.mean(normalized * normalized))
+    _, scale_exponent = jnp.frexp(scale)
+    normalized = jnp.ldexp(values, -scale_exponent)
+    stable = jnp.ldexp(jnp.sqrt(jnp.mean(normalized * normalized)), scale_exponent)
     reduction_only_overflow = ~jnp.isfinite(direct) & jnp.all(jnp.isfinite(values))
     return jnp.where(reduction_only_overflow, stable, direct)
 
