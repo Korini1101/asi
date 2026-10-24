@@ -216,6 +216,18 @@ class ObGDBounding(Bounder):
         return _apply_obgd_bound(steps, error, self._kappa)
 
 
+def _unitwise_power_of_two_norm_parts(
+    x: Array, axes: tuple[int, ...]
+) -> tuple[Array, Array, Array]:
+    """Return an L2 norm and its exactly rescaled inputs without reciprocal flush."""
+    maximum = jnp.max(jnp.abs(x), axis=axes, keepdims=True)
+    _, exponent = jnp.frexp(maximum)
+    safe_exponent = jnp.where(jnp.isfinite(maximum) & (maximum > 0.0), exponent, 0)
+    scaled = jnp.ldexp(x, -safe_exponent)
+    scaled_norm = jnp.sqrt(jnp.sum(scaled * scaled, axis=axes, keepdims=True))
+    return jnp.ldexp(scaled_norm, safe_exponent), scaled, scaled_norm
+
+
 def _unitwise_norm(x: Array) -> Array:
     """Compute unit-wise L2 norm.
 
@@ -228,12 +240,7 @@ def _unitwise_norm(x: Array) -> Array:
     if x.ndim >= 2:
         axes = tuple(range(1, x.ndim))
         direct = jnp.sqrt(jnp.sum(x * x, axis=axes, keepdims=True))
-        scale = jnp.max(jnp.abs(x), axis=axes, keepdims=True)
-        safe_scale = jnp.where(scale > 0.0, scale, jnp.ones_like(scale))
-        normalized = x / safe_scale
-        stable = scale * jnp.sqrt(
-            jnp.sum(normalized * normalized, axis=axes, keepdims=True)
-        )
+        stable, _, _ = _unitwise_power_of_two_norm_parts(x, axes)
         reduction_only_overflow = ~jnp.isfinite(direct) & jnp.all(
             jnp.isfinite(x), axis=axes, keepdims=True
         )
@@ -254,16 +261,20 @@ def _tuple_root_mean_square(values: tuple[Array, ...], epsilon: float) -> Array:
         all_finite = all_finite & jnp.all(jnp.isfinite(value))
     denominator = jnp.maximum(jnp.asarray(count, dtype=jnp.float32), 1.0)
     direct = jnp.sqrt(sum_squares / denominator + epsilon)
-    safe_scale = jnp.where(scale > 0.0, scale, jnp.ones_like(scale))
+    _, exponent = jnp.frexp(scale)
+    safe_exponent = jnp.where(jnp.isfinite(scale) & (scale > 0.0), exponent, 0)
     normalized_sum_squares = jnp.asarray(0.0, dtype=jnp.float32)
     for value in values:
-        normalized = value / safe_scale
+        normalized = jnp.ldexp(value, -safe_exponent)
         normalized_sum_squares = normalized_sum_squares + jnp.sum(
             normalized * normalized
         )
-    scaled_epsilon = (epsilon / safe_scale) / safe_scale
-    stable = scale * jnp.sqrt(
-        normalized_sum_squares / denominator + scaled_epsilon
+    scaled_epsilon = jnp.ldexp(
+        jnp.asarray(epsilon, dtype=jnp.float32), -2 * safe_exponent
+    )
+    stable = jnp.ldexp(
+        jnp.sqrt(normalized_sum_squares / denominator + scaled_epsilon),
+        safe_exponent,
     )
     reduction_only_overflow = ~jnp.isfinite(direct) & all_finite
     return jnp.where(reduction_only_overflow, stable, direct)
@@ -390,6 +401,28 @@ class AGCBounding(Bounder):
             scale = max_norm / jnp.maximum(g_norm, 1e-6)
             needs_clip = g_norm > max_norm
             clipped_step = jnp.where(needs_clip, step * scale, step)
+            if step.ndim >= 2:
+                axes = tuple(range(1, step.ndim))
+                direct_s_norm = jnp.sqrt(
+                    jnp.sum(step * step, axis=axes, keepdims=True)
+                )
+                _, scaled_step, scaled_step_norm = _unitwise_power_of_two_norm_parts(
+                    step, axes
+                )
+                reduction_only_overflow = ~jnp.isfinite(direct_s_norm) & jnp.all(
+                    jnp.isfinite(step), axis=axes, keepdims=True
+                )
+                stable_denominator = jnp.maximum(
+                    error_abs * scaled_step_norm, 1e-6
+                )
+                stable_clipped_step = scaled_step * (
+                    max_norm / stable_denominator
+                )
+                clipped_step = jnp.where(
+                    needs_clip & reduction_only_overflow,
+                    stable_clipped_step,
+                    clipped_step,
+                )
             collapsed = needs_clip & (scale == 0)
             clipped.append(zero_if_collapsed_infinity(clipped_step, step, collapsed))
 

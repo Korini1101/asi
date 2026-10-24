@@ -736,6 +736,46 @@ class TestAGCBounding:
         np.testing.assert_allclose(clipped, params[0], rtol=1e-6)
         assert float(fraction) == 1.0
 
+    @pytest.mark.parametrize("value", [1e38, 3e38])
+    @pytest.mark.parametrize("compiled", [False, True])
+    def test_extreme_finite_steps_clip_to_finite_budget(
+        self, value: float, compiled: bool
+    ) -> None:
+        params = (jnp.ones((1, 8), dtype=jnp.float32),)
+        steps = (jnp.full((1, 8), value, dtype=jnp.float32),)
+        bound = AGCBounding(clip_factor=1.0).bound
+        if compiled:
+            bound = jax.jit(bound)
+
+        (clipped,), fraction = bound(
+            steps,
+            jnp.asarray(1.0, dtype=jnp.float32),
+            params,
+        )
+
+        np.testing.assert_allclose(clipped, params[0], rtol=1e-6)
+        assert float(fraction) == 1.0
+
+    @pytest.mark.parametrize("value", [1e38, 3e38])
+    @pytest.mark.parametrize("compiled", [False, True])
+    def test_extreme_finite_params_do_not_spuriously_clip(
+        self, value: float, compiled: bool
+    ) -> None:
+        params = (jnp.full((1, 8), value, dtype=jnp.float32),)
+        steps = (jnp.ones((1, 8), dtype=jnp.float32),)
+        bound = AGCBounding(clip_factor=1.0).bound
+        if compiled:
+            bound = jax.jit(bound)
+
+        (clipped,), fraction = bound(
+            steps,
+            jnp.asarray(1.0, dtype=jnp.float32),
+            params,
+        )
+
+        chex.assert_trees_all_equal(clipped, steps[0])
+        assert float(fraction) == 0.0
+
     def test_metric_fraction_clipped(self):
         """Metric should report correct fraction of clipped units."""
         # Create a scenario where exactly the 2D param gets clipped but the 1D doesn't
