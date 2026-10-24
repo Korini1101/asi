@@ -868,11 +868,21 @@ class RiverSwimMDP:
             The long-run average reward of the policy.
         """
 
-        actions = np.asarray(policy, dtype=np.int64)
-        if actions.shape != (self._n_states,):
-            raise ValueError(f"policy must have length {self._n_states}, got shape {actions.shape}")
-        if not np.all((actions == LEFT_ACTION) | (actions == RIGHT_ACTION)):
-            raise ValueError("policy actions must be LEFT_ACTION (0) or RIGHT_ACTION (1)")
+        if len(policy) != self._n_states:
+            raise ValueError(f"policy must have length {self._n_states}")
+        canonical_actions: list[int] = []
+        for action in policy:
+            if type(action) not in _ACTUAL_INT_TYPES:
+                raise ValueError(
+                    "policy actions must be exact integers: LEFT_ACTION (0) or RIGHT_ACTION (1)"
+                )
+            canonical = operator.index(cast(SupportsIndex, action))
+            if canonical not in (LEFT_ACTION, RIGHT_ACTION):
+                raise ValueError(
+                    "policy actions must be exact integers: LEFT_ACTION (0) or RIGHT_ACTION (1)"
+                )
+            canonical_actions.append(canonical)
+        actions = np.asarray(canonical_actions, dtype=np.int64)
         states = np.arange(self._n_states)
         kernel = self._transitions_np[actions, states]
         step_rewards = self._rewards_np[states, actions]
