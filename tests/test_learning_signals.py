@@ -124,6 +124,24 @@ def test_config_roundtrip_validation_and_exact_resource_budget() -> None:
         LearningSignalEstimatorConfig.from_config(invalid_claim)
 
 
+def test_config_deserialization_requires_the_complete_exact_schema() -> None:
+    serialized = LearningSignalEstimatorConfig(
+        ensemble_size=3,
+        target_dim=2,
+        change_calibration_steps=8,
+    ).to_config()
+
+    for field_name in serialized:
+        incomplete = dict(serialized)
+        incomplete.pop(field_name)
+        match = "type" if field_name == "type" else "serialized schema"
+        with pytest.raises(ValueError, match=match):
+            LearningSignalEstimatorConfig.from_config(incomplete)
+
+    with pytest.raises(ValueError, match="serialized schema"):
+        LearningSignalEstimatorConfig.from_config({**serialized, "extra": 1})
+
+
 def test_hand_calculation_preserves_units_and_causal_progress() -> None:
     estimator = LearningSignalEstimator(
         LearningSignalEstimatorConfig(
