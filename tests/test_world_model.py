@@ -293,6 +293,31 @@ def test_world_model_scan_is_jit_compatible() -> None:
     chex.assert_tree_all_finite(result.next_observation_predictions)
 
 
+@pytest.mark.parametrize("dtype", [np.int64, np.uint64])
+def test_world_model_scan_rejects_wide_host_integer_action(dtype) -> None:
+    """Host integers outside int32 cannot wrap onto a legal scan action."""
+    model = OneStepWorldModel(
+        WorldModelConfig(
+            observation_dim=1,
+            n_actions=2,
+            hidden_sizes=(),
+            sparsity=0.0,
+        )
+    )
+    observations = jnp.zeros((1, 1), dtype=jnp.float32)
+    result = run_world_model_learning_loop(
+        model,
+        model.init(jr.key(0)),
+        observations,
+        np.asarray([2**32], dtype=dtype),
+        jnp.zeros((1,), dtype=jnp.float32),
+        observations,
+    )
+
+    assert not bool(result.updates_applied[0])
+    assert int(result.state.step_count) == 0
+
+
 def test_world_model_learns_action_conditional_deterministic_transition() -> None:
     cfg = WorldModelConfig(
         observation_dim=2,
