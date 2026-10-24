@@ -157,6 +157,28 @@ def _exact_config_payload(config: object, expected: frozenset[str]) -> dict[str,
     return cast(dict[str, Any], dict(payload))
 
 
+def _exact_construction_payload(
+    config: object,
+    *,
+    expected_type: str,
+    expected_fields: frozenset[str],
+) -> dict[str, Any]:
+    """Require the complete outer identity of one serialized agent."""
+
+    try:
+        payload = _exact_config_payload(config, expected_fields | {"type"})
+    except ValueError as error:
+        raise ValueError(
+            f"{expected_type} construction fields do not match the serialized schema"
+        ) from error
+    marker = payload.pop("type")
+    if type(marker) is not str or marker != expected_type:
+        raise ValueError(
+            f"{expected_type} construction fields do not match the serialized schema"
+        )
+    return payload
+
+
 def _check_actor_resources(resources: dict[str, int]) -> dict[str, int]:
     for name, value in resources.items():
         if value > _INT32_MAX:
@@ -631,13 +653,16 @@ class QHordeActorCriticAgent:
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> QHordeActorCriticAgent:
         """Reconstruct a ``QHordeActorCriticAgent`` from a dictionary."""
-        config = dict(config)
-        config.pop("type", None)
+        payload = _exact_construction_payload(
+            config,
+            expected_type="QHordeActorCriticAgent",
+            expected_fields=frozenset({"config", "critic", "actor_bounder"}),
+        )
         return cls(
-            config=QHordeActorCriticConfig.from_config(config["config"]),
-            critic=HordeLearner.from_config(config["critic"]),
-            actor_bounder=bounder_from_config(config["actor_bounder"])
-            if config.get("actor_bounder") is not None
+            config=QHordeActorCriticConfig.from_config(payload["config"]),
+            critic=HordeLearner.from_config(payload["critic"]),
+            actor_bounder=bounder_from_config(payload["actor_bounder"])
+            if payload["actor_bounder"] is not None
             else None,
         )
 
@@ -929,13 +954,16 @@ class HordeActorCriticAgent:
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> HordeActorCriticAgent:
         """Reconstruct a ``HordeActorCriticAgent`` from a dictionary."""
-        config = dict(config)
-        config.pop("type", None)
+        payload = _exact_construction_payload(
+            config,
+            expected_type="HordeActorCriticAgent",
+            expected_fields=frozenset({"config", "critic", "actor_bounder"}),
+        )
         return cls(
-            config=HordeActorCriticConfig.from_config(config["config"]),
-            critic=HordeLearner.from_config(config["critic"]),
-            actor_bounder=bounder_from_config(config["actor_bounder"])
-            if config.get("actor_bounder") is not None
+            config=HordeActorCriticConfig.from_config(payload["config"]),
+            critic=HordeLearner.from_config(payload["critic"]),
+            actor_bounder=bounder_from_config(payload["actor_bounder"])
+            if payload["actor_bounder"] is not None
             else None,
         )
 
@@ -1715,18 +1743,23 @@ class NonlinearHordeActorCriticAgent:
     @classmethod
     def from_config(cls, cfg: dict[str, Any]) -> NonlinearHordeActorCriticAgent:
         """Reconstruct from :meth:`to_config` output."""
-        cfg = dict(cfg)
-        cfg.pop("type", None)
+        payload = _exact_construction_payload(
+            cfg,
+            expected_type="NonlinearHordeActorCriticAgent",
+            expected_fields=frozenset(
+                {"config", "critic", "actor_optimizer", "actor_bounder"}
+            ),
+        )
         actor_opt: Autostep | None = None
-        actor_optimizer_cfg = cfg.get("actor_optimizer")
+        actor_optimizer_cfg = payload["actor_optimizer"]
         if actor_optimizer_cfg is not None:
             actor_opt = cast(Autostep, optimizer_from_config(actor_optimizer_cfg))
         return cls(
-            config=NonlinearHordeActorCriticConfig.from_config(cfg["config"]),
-            critic=HordeLearner.from_config(cfg["critic"]),
+            config=NonlinearHordeActorCriticConfig.from_config(payload["config"]),
+            critic=HordeLearner.from_config(payload["critic"]),
             actor_optimizer=actor_opt,
-            actor_bounder=bounder_from_config(cfg["actor_bounder"])
-            if cfg.get("actor_bounder") is not None
+            actor_bounder=bounder_from_config(payload["actor_bounder"])
+            if payload["actor_bounder"] is not None
             else None,
         )
 
@@ -2428,10 +2461,15 @@ class NonlinearQHordeActorCriticAgent:
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> NonlinearQHordeActorCriticAgent:
         """Reconstruct from :meth:`to_config` output."""
-        payload = dict(config)
-        payload.pop("type", None)
+        payload = _exact_construction_payload(
+            config,
+            expected_type="NonlinearQHordeActorCriticAgent",
+            expected_fields=frozenset(
+                {"config", "critic", "actor_optimizer", "actor_bounder"}
+            ),
+        )
         actor_opt: Autostep | None = None
-        actor_optimizer_cfg = payload.get("actor_optimizer")
+        actor_optimizer_cfg = payload["actor_optimizer"]
         if actor_optimizer_cfg is not None:
             actor_opt = cast(Autostep, optimizer_from_config(actor_optimizer_cfg))
         return cls(
@@ -2439,7 +2477,7 @@ class NonlinearQHordeActorCriticAgent:
             critic=HordeLearner.from_config(payload["critic"]),
             actor_optimizer=actor_opt,
             actor_bounder=bounder_from_config(payload["actor_bounder"])
-            if payload.get("actor_bounder") is not None
+            if payload["actor_bounder"] is not None
             else None,
         )
 
