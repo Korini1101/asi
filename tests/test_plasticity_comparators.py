@@ -129,6 +129,7 @@ def test_nap_projection_preserves_radius_when_direct_norm_overflows() -> None:
 
     projected = nap_project(weights, initial_norm=3.0)
 
+    assert projected.dtype == weights.dtype
     assert bool(jnp.all(jnp.isfinite(projected)))
     assert np.linalg.norm(np.asarray(projected, dtype=np.float64)) == pytest.approx(
         3.0,
@@ -164,6 +165,20 @@ def test_nap_projection_preserves_radius_when_direct_norm_underflows() -> None:
             rel=1e-6,
         )
     assert bool(jnp.all(nap_project(weights, initial_norm=0.0) == 0))
+
+
+def test_nap_projection_uses_wide_accumulation_for_large_low_precision_array() -> None:
+    weights = jnp.ones((262_144,), dtype=jnp.float16)
+    assert bool(jnp.isinf(jnp.linalg.norm(weights)))
+
+    projected = nap_project(weights, initial_norm=3.0)
+
+    assert projected.dtype == weights.dtype
+    assert bool(jnp.all(jnp.isfinite(projected)))
+    assert np.linalg.norm(np.asarray(projected, dtype=np.float64)) == pytest.approx(
+        3.0,
+        rel=1e-3,
+    )
 
 
 def test_c_chain_churn_loss_and_off_reduction() -> None:

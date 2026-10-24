@@ -533,7 +533,8 @@ def nap_project(weights: Array, *, initial_norm: float, enabled: bool = True) ->
     maximum = jnp.max(jnp.abs(weights))
     _, exponent = jnp.frexp(maximum)
     scaled = jnp.ldexp(weights, -exponent)
-    scaled_norm = jnp.linalg.norm(scaled)
+    norm_dtype = jnp.promote_types(weights.dtype, jnp.float32)
+    scaled_norm = jnp.linalg.norm(scaled.astype(norm_dtype)).astype(weights.dtype)
     overflow_safe = jnp.where(
         scaled_norm > 0,
         scaled * (target_norm / scaled_norm),
