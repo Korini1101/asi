@@ -423,7 +423,10 @@ class OptionValueDurationLearner:
             dtype=jnp.float32,
         )
         heads = jnp.einsum("ohf,f->oh", state.weights, observation)
-        return jnp.where(self._state_values_valid(state), heads, jnp.zeros_like(heads))
+        inputs_valid = self._state_values_valid(state) & jnp.all(
+            jnp.isfinite(observation)
+        )
+        return jnp.where(inputs_valid, heads, jnp.zeros_like(heads))
 
     @functools.partial(jax.jit, static_argnums=(0,))
     def predict(
