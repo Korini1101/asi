@@ -295,6 +295,24 @@ def test_finite_product_matvec_handles_batched_matrices() -> None:
     assert float(result[1, 0]) == 0.0
 
 
+def test_finite_product_matvec_preserves_a_legitimate_near_cancellation() -> None:
+    """Rounded opposite products must not erase a real finite row sum."""
+
+    matrix = jnp.asarray([[-3764683.75, 4350948.0]], dtype=jnp.float32)
+    vector = jnp.asarray([3.1415927410125732, 2.7182817459106445], dtype=jnp.float32)
+    reference = float(
+        np.asarray(matrix, dtype=np.float64)[0] @ np.asarray(vector, dtype=np.float64)
+    )
+
+    result = _finite_product_matvec(matrix, vector)
+    compiled = jax.jit(_finite_product_matvec)(matrix, vector)
+
+    for observed in (result, compiled):
+        value = float(observed[0])
+        assert np.signbit(value) == np.signbit(reference)
+        assert abs(value - reference) < abs(reference)
+
+
 @pytest.mark.parametrize("shape", [(1, 3), (3, 6), (8, 20)])
 @pytest.mark.parametrize("scale", [1e-3, 1.0, 1e5, 1e15])
 def test_finite_product_matvec_keeps_ordinary_rows_bit_for_bit(

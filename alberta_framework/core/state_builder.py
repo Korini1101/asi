@@ -1335,7 +1335,10 @@ def _online_gated_update_working_set_bytes(
     materializes another sensitivity matrix, the proposed sensitivity is
     live before it is stored, and the caller-visible representation plus
     its neutralized NaN copy are returned beside the selected state.
-    Event / safe-event / gate temporaries are charged as well.
+    Event / safe-event / gate temporaries are charged as well.  The stabilized
+    matvec charge includes its float32 product decomposition and aligned sums;
+    its custom JVP keeps those per-product intermediates out of the Jacobian
+    batch.
     """
 
     event_dim = observation_dim + n_actions + 2
@@ -1352,6 +1355,10 @@ def _online_gated_update_working_set_bytes(
         + hidden_dim
         + 16
     )
+    stabilized_matvec_scalars = (
+        11 * hidden_dim * event_dim + 5 * event_dim + 10 * hidden_dim
+    )
+    update_scalars += stabilized_matvec_scalars
     return 4 * update_scalars
 
 
@@ -1506,15 +1513,51 @@ class OnlineGatedStateBuilderState:
 _SCALED_SUM_RELATIVE_GAP = 1024.0
 """Disagreement, in units of the smaller magnitude, that rejects a compiled product.
 
-A correct row sum and the scaled sum of float32 products both lie within a few
-ulp of the largest product of the exact sum, so on an ordinary row their gap is
-a small fraction of the value they agree on. Measured on x86-64 XLA:CPU over
-2.4 million random rows (normal, uniform, and mixed-magnitude inputs; shapes
-from ``(1, 3)`` to ``(16, 40)``; product scales from 1e-3 to 1e18) the largest
-ratio was 0.11, so 1024 keeps every ordinary row bit for bit with a ``1e4``
-margin. A cancelling row leaves its residue against a scaled sum of zero, so
-any nonzero residue exceeds this bound at every magnitude.
+A correct row sum and the error-corrected scaled sum both lie within a few ulp
+of the exact sum, so on an ordinary row their gap is a small fraction of the
+value they agree on. A truly cancelling row leaves the compiled residue against
+an error-corrected zero, so any nonzero residue exceeds this bound at every
+magnitude.
 """
+
+_FLOAT32_SPLITTER = 4097.0
+"""Dekker splitter for the 24-bit float32 significand."""
+
+
+def _float32_product_parts(lhs: Array, rhs: Array) -> tuple[Array, Array]:
+    """Return high and residual parts of products of bounded float32 mantissas."""
+
+    product = lhs * rhs
+    splitter = jnp.asarray(_FLOAT32_SPLITTER, dtype=product.dtype)
+    split_lhs = splitter * lhs
+    split_rhs = splitter * rhs
+    lhs_high = split_lhs - (split_lhs - lhs)
+    rhs_high = split_rhs - (split_rhs - rhs)
+    lhs_low = lhs - lhs_high
+    rhs_low = rhs - rhs_high
+    residual = (
+        (lhs_high * rhs_high - product)
+        + lhs_high * rhs_low
+        + lhs_low * rhs_high
+        + lhs_low * rhs_low
+    )
+    return product, residual
+
+
+def _error_corrected_scaled_sum(
+    matrix: Array,
+    vector: Array,
+    row_exponent: Array,
+) -> Array:
+    """Sum each row's products without discarding float32 multiplication residuals."""
+
+    matrix_mantissa, matrix_exponent = jnp.frexp(matrix)
+    vector_mantissa, vector_exponent = jnp.frexp(vector)
+    product, residual = _float32_product_parts(matrix_mantissa, vector_mantissa)
+    shift = matrix_exponent + vector_exponent - row_exponent
+    scaled_products = jnp.ldexp(product, shift)
+    scaled_residuals = jnp.ldexp(residual, shift)
+    return jnp.sum(scaled_products, axis=-1) + jnp.sum(scaled_residuals, axis=-1)
 
 
 def _prefer_scaled_sum(scaled_direct: Array, scaled_sum: Array) -> Array:
@@ -1535,6 +1578,7 @@ def _prefer_scaled_sum(scaled_direct: Array, scaled_sum: Array) -> Array:
     return jnp.isfinite(scaled_sum) & (gap > threshold)
 
 
+@jax.custom_jvp
 def _finite_product_matvec(matrix: Array, vector: Array) -> Array:
     """Return ``matrix @ vector`` unless a compiled residue corrupts a cancelling row.
 
@@ -1546,9 +1590,10 @@ def _finite_product_matvec(matrix: Array, vector: Array) -> Array:
     product (at most half an ulp of that product) instead of zero. That
     residue is ``-4096`` for products of ``1e12``, ``-256`` for ``1.21e10``,
     ``-64`` for ``1.089e9``, and about ``5e30`` for ``2.25e38``; it saturates a
-    sigmoid gate at any of those magnitudes. The scaled sum adds the float32
-    products after an exact power-of-two scaling by the largest product, so it
-    cancels exactly and neither overflows nor flushes to zero.
+    sigmoid gate at any of those magnitudes. The fallback decomposes each
+    bounded float32 mantissa product into its rounded and residual parts before
+    an exact power-of-two alignment, so true cancellation remains zero without
+    erasing a legitimate sum that was hidden below product-rounding precision.
 
     The compiled product is returned bit for bit whenever it agrees with the
     scaled sum to within ``_SCALED_SUM_RELATIVE_GAP`` times the smaller
@@ -1557,10 +1602,7 @@ def _finite_product_matvec(matrix: Array, vector: Array) -> Array:
     residue over a zero sum), far below (a zeroed row), or non-finite while
     the exact sum is finite (a running sum that overflowed). A row where both
     values are finite and agree to within that factor keeps the compiled
-    product even when it differs by a few ulp of the largest product; this
-    helper cannot and does not arbitrate between two results that differ at
-    rounding scale, so a tolerance at the product rounding scale could never
-    detect the residue, which is itself below one ulp of the largest product.
+    product even when it differs by a few ulp of the exact sum.
     """
 
     products = matrix * vector
@@ -1568,13 +1610,28 @@ def _finite_product_matvec(matrix: Array, vector: Array) -> Array:
     # Scale by a power of two. Dividing by max_abs compiles to a reciprocal
     # multiply, and the reciprocal of a value above 2**126 flushes to zero.
     _, exponent = jnp.frexp(max_abs)
-    scaled_sum = jnp.sum(jnp.ldexp(products, -exponent), axis=-1)
-    row_exponent = exponent[..., 0]
+    row_exponent = exponent
+    scaled_sum = _error_corrected_scaled_sum(matrix, vector, row_exponent)
+    row_exponent = row_exponent[..., 0]
     stable = jnp.ldexp(scaled_sum, row_exponent)
     direct = matrix @ vector
     scaled_direct = jnp.ldexp(direct, -row_exponent)
     use_stable = _prefer_scaled_sum(scaled_direct, scaled_sum) & jnp.isfinite(stable)
     return jnp.where(use_stable, stable, direct)
+
+
+@_finite_product_matvec.defjvp
+def _finite_product_matvec_jvp(
+    primals: tuple[Array, Array],
+    tangents: tuple[Array, Array],
+) -> tuple[Array, Array]:
+    """Differentiate the mathematical matvec without expanding fallback intermediates."""
+
+    matrix, vector = primals
+    matrix_tangent, vector_tangent = tangents
+    value = _finite_product_matvec(matrix, vector)
+    tangent = matrix_tangent @ vector + matrix @ vector_tangent
+    return value, tangent
 
 
 class OnlineGatedStateBuilder:
