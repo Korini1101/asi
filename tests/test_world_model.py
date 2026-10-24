@@ -144,6 +144,28 @@ def test_world_model_rejects_size_one_scalar_aliases(
         jax.jit(call)()
 
 
+def test_world_model_preserves_wide_integer_action_identity() -> None:
+    """A legal int32 action must not be rounded through float32 before encoding."""
+    expected_action = 2**24 + 1
+    model = OneStepWorldModel(
+        WorldModelConfig(
+            observation_dim=1,
+            n_actions=expected_action + 1,
+            hidden_sizes=(),
+        )
+    )
+    action = jnp.asarray(expected_action, dtype=jnp.int32)
+
+    @jax.jit
+    def selected_entries(value: jax.Array) -> jax.Array:
+        encoded = model.encode_action(value)
+        # Consume only the two relevant entries so XLA can fuse away the
+        # logically large one-hot vector required to expose the float32 cliff.
+        return jnp.asarray([encoded[expected_action], encoded[expected_action - 1]])
+
+    np.testing.assert_array_equal(selected_entries(action), [1.0, 0.0])
+
+
 def test_world_model_preserves_direct_numeric_dtype_canonicalization() -> None:
     model = OneStepWorldModel(
         WorldModelConfig(

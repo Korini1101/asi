@@ -280,6 +280,14 @@ def _float32_operand(
     return array
 
 
+def _discrete_action_operand(name: str, value: Array | float | int) -> Array:
+    """Preserve an integer action's exact domain while enforcing scalar shape."""
+    array = jnp.asarray(value)
+    if array.shape != ():
+        raise ValueError(f"{name} must have shape (), got {array.shape}")
+    return array
+
+
 @dataclasses.dataclass(frozen=True)
 class ActionConditionedWorldModelConfig:
     """Configuration for :class:`ActionConditionedWorldModel`.
@@ -758,7 +766,7 @@ class ActionConditionedWorldModel:
     @functools.partial(jax.jit, static_argnums=(0,))
     def encode_action(self, action: Array) -> Array:
         """Return the action code, leaving invalid discrete inputs visible."""
-        action = _float32_operand("action", action, ())
+        action = _discrete_action_operand("action", action)
         safe_action, action_valid = safe_discrete_action(
             action,
             self._config.n_actions,
@@ -920,7 +928,7 @@ class ActionConditionedWorldModel:
         obs = _float32_operand(
             "observation", observation, (self._config.observation_dim,)
         )
-        action = _float32_operand("action", action, ())
+        action = _discrete_action_operand("action", action)
         action_arr, action_valid = safe_discrete_action(
             action,
             self._config.n_actions,
@@ -1075,7 +1083,7 @@ def run_action_conditioned_world_model_learning_loop(
         bool_scalars=num_steps,
     )
     observations = jnp.asarray(observations, dtype=jnp.float32)
-    actions = jnp.asarray(actions, dtype=jnp.float32)
+    actions = jnp.asarray(actions)
     rewards = jnp.asarray(rewards, dtype=jnp.float32)
     next_observations = jnp.asarray(next_observations, dtype=jnp.float32)
     if discounts is None:
@@ -1384,7 +1392,7 @@ class OneStepWorldModel:
     def encode_action(self, action: Array) -> Array:
         """Encode a discrete or vector action."""
         if self._config.n_actions is not None:
-            action = _float32_operand("action", action, ())
+            action = _discrete_action_operand("action", action)
             safe_action, action_valid = safe_discrete_action(
                 action,
                 self._config.n_actions,
@@ -1474,7 +1482,7 @@ class OneStepWorldModel:
             (self._config.observation_dim,),
         )
         if self._config.n_actions is not None:
-            action = _float32_operand("action", action, ())
+            action = _discrete_action_operand("action", action)
             safe_action, action_valid = safe_discrete_action(
                 action,
                 self._config.n_actions,
@@ -1605,7 +1613,11 @@ def run_world_model_learning_loop(
         bool_scalars=num_steps,
     )
     observations = jnp.asarray(observations, dtype=jnp.float32)
-    actions = jnp.asarray(actions, dtype=jnp.float32)
+    actions = (
+        jnp.asarray(actions)
+        if model.config.n_actions is not None
+        else jnp.asarray(actions, dtype=jnp.float32)
+    )
     rewards = jnp.asarray(rewards, dtype=jnp.float32)
     next_observations = jnp.asarray(next_observations, dtype=jnp.float32)
 
