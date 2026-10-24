@@ -122,6 +122,34 @@ def test_nap_projection_and_off_reduction() -> None:
     assert np.isclose(float(jnp.linalg.norm(nap_project(weights, initial_norm=2.0))), 2.0)
 
 
+def test_nap_projection_preserves_radius_when_direct_norm_overflows() -> None:
+    weights = jnp.asarray([1.5e19, 1.5e19], dtype=jnp.float32)
+    assert bool(jnp.all(jnp.isfinite(weights)))
+    assert bool(jnp.isinf(jnp.linalg.norm(weights)))
+
+    projected = nap_project(weights, initial_norm=3.0)
+
+    assert bool(jnp.all(jnp.isfinite(projected)))
+    assert np.linalg.norm(np.asarray(projected, dtype=np.float64)) == pytest.approx(
+        3.0,
+        rel=1e-6,
+    )
+
+
+def test_nap_projection_preserves_radius_when_reciprocal_underflows() -> None:
+    weights = jnp.asarray([3.0e38], dtype=jnp.float32)
+    norm = jnp.linalg.norm(weights)
+    assert bool(jnp.isfinite(norm))
+    assert float(jnp.asarray(3.0, dtype=jnp.float32) / norm) == 0.0
+
+    projected = nap_project(weights, initial_norm=3.0)
+
+    assert np.linalg.norm(np.asarray(projected, dtype=np.float64)) == pytest.approx(
+        3.0,
+        rel=1e-6,
+    )
+
+
 def test_c_chain_churn_loss_and_off_reduction() -> None:
     before = jnp.asarray([1.0, 2.0])
     after = jnp.asarray([2.0, 4.0])
