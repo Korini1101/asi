@@ -197,7 +197,7 @@ def _behavior_model_update_working_set_bytes(n_actions: int, feature_dim: int) -
 
     ``update`` keeps the source state, the proposed state, and the
     transaction-selected result simultaneously live.  The worst-case path
-    also materializes a weight/bias gradient plus an L2 or clip copy,
+    also materializes a weight/bias gradient plus norm-scaled and L2 or clip copies,
     logits / probabilities / one-hot / logit-error, the observation, and
     neutralized returned logits/probabilities beside the committed state.
     """
@@ -206,8 +206,8 @@ def _behavior_model_update_working_set_bytes(n_actions: int, feature_dim: int) -
     persist_scalars = trainable + 6
     update_scalars = (
         3 * persist_scalars
-        + 2 * n_actions * feature_dim
-        + 2 * n_actions
+        + 3 * n_actions * feature_dim
+        + 3 * n_actions
         + 4 * n_actions
         + feature_dim
         + 2 * n_actions
@@ -236,6 +236,28 @@ def _saturating_int32_increment(value: Array) -> Array:
     maximum = jnp.asarray(_INT32_MAX, dtype=jnp.int32)
     counter = jnp.asarray(value, dtype=jnp.int32)
     return jnp.minimum(jnp.maximum(counter, 0), maximum - 1) + 1
+
+
+def _reduction_safe_l2_norm(*values: Array) -> Array:
+    """Preserve an ordinary L2 norm when only its square reduction overflows."""
+
+    direct_sum = jnp.asarray(0.0, dtype=jnp.float32)
+    scale = jnp.asarray(0.0, dtype=jnp.float32)
+    all_finite = jnp.asarray(True, dtype=jnp.bool_)
+    for value in values:
+        direct_sum = direct_sum + jnp.sum(jnp.square(value))
+        scale = jnp.maximum(scale, jnp.max(jnp.abs(value)))
+        all_finite = all_finite & jnp.all(jnp.isfinite(value))
+    direct = jnp.sqrt(direct_sum)
+
+    _, exponent = jnp.frexp(scale)
+    scaled_sum = jnp.asarray(0.0, dtype=jnp.float32)
+    for value in values:
+        scaled = jnp.ldexp(value, -exponent)
+        scaled_sum = scaled_sum + jnp.sum(jnp.square(scaled))
+    stable = jnp.ldexp(jnp.sqrt(scaled_sum), exponent)
+    reduction_only_overflow = ~jnp.isfinite(direct) & all_finite
+    return jnp.where(reduction_only_overflow, stable, direct)
 
 
 def _integer_action_ids(
@@ -850,7 +872,7 @@ class BehaviorModel:
         loss = -jnp.sum(one_hot * _stable_temperature_log_softmax(logits, cfg.temperature))
         logit_gradient = (probabilities - one_hot) / cfg.temperature
         gradient = state.weights.T @ logit_gradient
-        gradient_norm = jnp.linalg.norm(gradient)
+        gradient_norm = _reduction_safe_l2_norm(gradient)
         # Inf observation makes softmax NaN and W.T @ (p - one_hot)
         # non-finite, including 0*inf on a silent feature. The parameter
         # update already no-ops; this pre-update bridge must not hand a
@@ -927,9 +949,7 @@ class BehaviorModel:
             bias_gradient = bias_gradient - cfg.l2_penalty * state.bias
 
         if cfg.max_gradient_norm is not None:
-            grad_norm = jnp.sqrt(
-                jnp.sum(weight_gradient * weight_gradient) + jnp.sum(bias_gradient * bias_gradient)
-            )
+            grad_norm = _reduction_safe_l2_norm(weight_gradient, bias_gradient)
             grad_scale = jnp.minimum(
                 1.0,
                 jnp.asarray(cfg.max_gradient_norm, dtype=jnp.float32)

@@ -266,6 +266,63 @@ def test_input_loss_gradient_rejects_finite_gradient_with_overflowed_norm() -> N
     assert float(result.gradient_norm) == 0.0
 
 
+def test_input_loss_gradient_keeps_representable_norm_when_square_sum_overflows() -> None:
+    """A finite bridge gradient must not be rejected by its norm reduction."""
+    model = BehaviorModel(BehaviorModelConfig(n_actions=2, step_size=0.1))
+    state = model.init(feature_dim=8, key=jax.random.key(3)).replace(
+        weights=jnp.stack(
+            [
+                jnp.full((8,), -7e18, dtype=jnp.float32),
+                jnp.full((8,), 7e18, dtype=jnp.float32),
+            ]
+        )
+    )
+    observation = jnp.zeros((8,), dtype=jnp.float32)
+    action = jnp.asarray(0, dtype=jnp.int32)
+    expected_gradient = jnp.full((8,), 7e18, dtype=jnp.float32)
+
+    assert bool(jnp.all(jnp.isfinite(expected_gradient * expected_gradient)))
+    assert bool(jnp.isinf(jnp.linalg.norm(expected_gradient)))
+
+    result = model.input_loss_gradient(state, observation, action)
+
+    assert bool(result.valid)
+    chex.assert_trees_all_close(result.gradient, expected_gradient)
+    assert bool(jnp.isfinite(result.gradient_norm))
+    expected_norm = float(np.float64(np.float32(7e18)) * np.sqrt(8.0))
+    np.testing.assert_allclose(float(result.gradient_norm), expected_norm, rtol=1e-6)
+
+
+def test_gradient_clipping_keeps_finite_update_when_square_sum_overflows() -> None:
+    """Global clipping must scale a representable norm instead of zeroing it."""
+    model = BehaviorModel(
+        BehaviorModelConfig(
+            n_actions=2,
+            step_size=1.0,
+            max_gradient_norm=2.0,
+        )
+    )
+    state = model.init(feature_dim=8, key=jax.random.key(4))
+    observation = jnp.full((8,), 1e19, dtype=jnp.float32)
+    action = jnp.asarray(0, dtype=jnp.int32)
+    raw_weight_gradient = jnp.stack((observation * 0.5, observation * -0.5))
+
+    assert bool(jnp.all(jnp.isfinite(raw_weight_gradient * raw_weight_gradient)))
+    assert bool(jnp.isinf(jnp.sqrt(jnp.sum(raw_weight_gradient * raw_weight_gradient))))
+
+    result = model.update(state, observation, action)
+
+    assert bool(result.update_applied)
+    expected_weights = jnp.stack(
+        (
+            jnp.full((8,), 0.5, dtype=jnp.float32),
+            jnp.full((8,), -0.5, dtype=jnp.float32),
+        )
+    )
+    chex.assert_trees_all_close(result.state.weights, expected_weights, rtol=1e-6)
+    assert int(result.state.step_count) == 1
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -662,7 +719,7 @@ def test_behavior_model_preflights_resource_bytes_before_allocation(
 ) -> None:
     model = BehaviorModel(BehaviorModelConfig(n_actions=2))
     persist_last_legal = ((2**31 - 1) - 32) // 8
-    update_last_legal = 48_806_441
+    update_last_legal = 41_297_757
     with pytest.raises(ValueError, match="update working set byte count"):
         model.resource_budget(persist_last_legal)
     with pytest.raises(ValueError, match="state_nbytes"):
@@ -771,7 +828,7 @@ def test_behavior_model_persist_fits_while_update_working_set_does_not() -> None
 def test_behavior_model_last_fit_and_first_overflow_are_adjacent() -> None:
     last_fit = None
     first_overflow = None
-    for feature_dim in range(89_478_476, 89_478_480):
+    for feature_dim in range(76_695_836, 76_695_840):
         working_set_bytes = _behavior_model_update_working_set_bytes(1, feature_dim)
         _, persist_bytes = _resource_counts(1, feature_dim)
         assert persist_bytes <= _INT32_MAX
