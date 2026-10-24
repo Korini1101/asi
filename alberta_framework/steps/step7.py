@@ -729,9 +729,9 @@ def _root_mean_square(values: Array) -> Array:
     """Return an RMS without overflowing solely in the square reduction."""
     direct = jnp.sqrt(jnp.mean(values * values))
     scale = jnp.max(jnp.abs(values))
-    safe_scale = jnp.where(scale > 0.0, scale, jnp.ones_like(scale))
-    scaled = values / safe_scale
-    stable = scale * jnp.sqrt(jnp.mean(scaled * scaled))
+    _, exponent = jnp.frexp(scale)
+    scaled = jnp.ldexp(values, -exponent)
+    stable = jnp.ldexp(jnp.sqrt(jnp.mean(scaled * scaled)), exponent)
     return jnp.where(jnp.isfinite(direct), direct, stable)
 
 
@@ -745,12 +745,19 @@ def _divide_by_one_plus_mean_square(
     direct_distance = jnp.mean(values * values, axis=axis)
     direct = numerator / (1.0 + direct_distance)
     scale = jnp.max(jnp.abs(values), axis=axis)
-    safe_scale = jnp.where(scale > 0.0, scale, jnp.ones_like(scale))
-    normalized = values / jnp.expand_dims(safe_scale, axis=axis)
+    _, exponent = jnp.frexp(scale)
+    normalized = jnp.ldexp(values, -jnp.expand_dims(exponent, axis=axis))
     normalized_mean_square = jnp.mean(normalized * normalized, axis=axis)
-    inverse_scale = 1.0 / safe_scale
-    stable = (numerator * inverse_scale) / (
-        inverse_scale + scale * normalized_mean_square
+    numerator_mantissa, numerator_exponent = jnp.frexp(
+        jnp.asarray(numerator, dtype=values.dtype)
+    )
+    squared_exponent = 2 * exponent
+    scaled_denominator = normalized_mean_square + jnp.ldexp(
+        jnp.ones_like(normalized_mean_square), -squared_exponent
+    )
+    stable = jnp.ldexp(
+        numerator_mantissa / scaled_denominator,
+        numerator_exponent - squared_exponent,
     )
     return jnp.where(jnp.isfinite(direct_distance), direct, stable)
 

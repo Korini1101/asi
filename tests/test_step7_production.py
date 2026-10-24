@@ -13,6 +13,7 @@ from fractions import Fraction
 from typing import Any
 
 import chex
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -25,6 +26,7 @@ from alberta_framework.steps.step7 import (
     Step7DynaState,
     Step7DynaUpdateResult,
     Step7SmokeResult,
+    _divide_by_one_plus_mean_square,
     _propagate_predecessor_priorities,
     _score_planning_actions,
     _select_planning_anchor,
@@ -716,6 +718,62 @@ def test_predecessor_propagation_retains_large_finite_similarity() -> None:
     assert bool(jnp.all(jnp.isfinite(priorities)))
     assert float(priorities[0]) > 0.0
     assert float(priorities[1]) > float(priorities[0])
+
+
+def test_prioritized_update_keeps_float32_ceiling_priorities_finite() -> None:
+    cfg = Step7DynaConfig(
+        control=Step6DifferentialSARSAConfig(n_actions=N_ACTIONS),
+        world_model=Step8WorldModelConfig(
+            observation_dim=OBS_DIM,
+            n_actions=N_ACTIONS,
+        ),
+        planning_steps=1,
+        planning_rollout_depth=1,
+        planning_warmup_steps=0,
+        planning_memory_size=8,
+        planning_strategy="prioritized",
+        planning_priority_propagation=1.0,
+    )
+    agent, model = make_step7_components(cfg)
+    magnitude = jnp.asarray(1e38, dtype=jnp.float32)
+    observation = magnitude * jnp.asarray([1.0, -1.0, 1.0, -1.0])
+    state = init_step7_state(
+        agent,
+        model,
+        key=jr.key(14),
+        initial_observation=observation,
+        memory_size=cfg.planning_memory_size,
+    )
+
+    for _ in range(4):
+        observation = -observation
+        result = step7_update(
+            cfg,
+            agent,
+            model,
+            state,
+            jnp.asarray(0.0, dtype=jnp.float32),
+            observation,
+        )
+        chex.assert_tree_all_finite(result.state.memory_priorities)
+        chex.assert_tree_all_finite(result.planning_priorities)
+        state = result.state
+
+
+@pytest.mark.parametrize("magnitude", [1e38, 3e38])
+def test_predecessor_similarity_avoids_ceiling_reciprocal_flush(
+    magnitude: float,
+) -> None:
+    values = jnp.full((2, OBS_DIM), magnitude, dtype=jnp.float32)
+
+    eager = _divide_by_one_plus_mean_square(1.0, values, axis=1)
+    compiled = jax.jit(
+        lambda items: _divide_by_one_plus_mean_square(1.0, items, axis=1)
+    )(values)
+
+    chex.assert_tree_all_finite(eager)
+    chex.assert_tree_all_finite(compiled)
+    chex.assert_trees_all_equal(eager, compiled)
 
 
 def test_step7_dyna_rejects_float32_underflow_for_positive_fields() -> None:
