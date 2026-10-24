@@ -41,6 +41,7 @@ from alberta_framework.core.independent_demon_horde import (
     IndependentDemonHorde,
     IndependentDemonHordeLearningResult,
     IndependentDemonHordeState,
+    _finite_layer_norm,
     _require_direct_state_resources,
     _require_loop_output_resources,
     run_independent_horde_learning_loop,
@@ -60,6 +61,19 @@ def _make_all_gamma0_spec(n: int) -> list[GVFSpec]:
         )
         for i in range(n)
     ]
+
+
+@pytest.mark.parametrize("compiled", (False, True))
+def test_finite_layer_norm_preserves_ordinary_path_bitwise(compiled: bool) -> None:
+    values = jnp.asarray([-2.0, -0.25, 0.5, 3.0], dtype=jnp.float32)
+
+    def ordinary_layer_norm(items: jax.Array) -> jax.Array:
+        return (items - jnp.mean(items)) / jnp.sqrt(jnp.var(items) + 1e-5)
+
+    normalize = jax.jit(_finite_layer_norm) if compiled else _finite_layer_norm
+    reference = jax.jit(ordinary_layer_norm) if compiled else ordinary_layer_norm
+
+    chex.assert_trees_all_equal(normalize(values), reference(values))
 
 
 # =============================================================================
@@ -116,6 +130,70 @@ class TestInitShape:
             # Single output layer of shape (1, feature_dim).
             assert len(ds.params.weights) == 1
             chex.assert_shape(ds.params.weights[0], (1, feature_dim))
+
+    def test_predict_layer_norm_preserves_equal_finite_extreme_activations(self) -> None:
+        """A reduction overflow must not turn a constant hidden layer into NaN."""
+        spec = create_horde_spec(_make_all_gamma0_spec(1))
+        horde = IndependentDemonHorde(
+            horde_spec=spec,
+            hidden_sizes=(2,),
+            sparsity=0.0,
+            use_layer_norm=True,
+        )
+        state = horde.init(1, jr.key(0))
+        demon_state = state.demon_states[0]
+        extreme = jnp.asarray(2e38, dtype=jnp.float32)
+        demon_state = demon_state.replace(  # type: ignore[attr-defined]
+            params=demon_state.params.replace(  # type: ignore[attr-defined]
+                weights=(
+                    jnp.ones((2, 1), dtype=jnp.float32),
+                    jnp.zeros((1, 2), dtype=jnp.float32),
+                ),
+                biases=(
+                    jnp.zeros((2,), dtype=jnp.float32),
+                    jnp.zeros((1,), dtype=jnp.float32),
+                ),
+            )
+        )
+        state = state.replace(demon_states=(demon_state,))  # type: ignore[attr-defined]
+
+        prediction = horde.predict(state, jnp.asarray([extreme], dtype=jnp.float32))
+
+        chex.assert_trees_all_equal(prediction, jnp.zeros((1,), dtype=jnp.float32))
+
+    def test_predict_layer_norm_preserves_finite_extreme_contrast(self) -> None:
+        """A variance overflow must not erase finite hidden-layer contrast."""
+        spec = create_horde_spec(_make_all_gamma0_spec(1))
+        horde = IndependentDemonHorde(
+            horde_spec=spec,
+            hidden_sizes=(2,),
+            sparsity=0.0,
+            use_layer_norm=True,
+        )
+        state = horde.init(1, jr.key(0))
+        demon_state = state.demon_states[0]
+        extreme = jnp.asarray(7e37, dtype=jnp.float32)
+        demon_state = demon_state.replace(  # type: ignore[attr-defined]
+            params=demon_state.params.replace(  # type: ignore[attr-defined]
+                weights=(
+                    jnp.asarray([[1.0], [-1.0]], dtype=jnp.float32),
+                    jnp.asarray([[0.5, -0.5]], dtype=jnp.float32),
+                ),
+                biases=(
+                    jnp.zeros((2,), dtype=jnp.float32),
+                    jnp.zeros((1,), dtype=jnp.float32),
+                ),
+            )
+        )
+        state = state.replace(demon_states=(demon_state,))  # type: ignore[attr-defined]
+
+        prediction = horde.predict(state, jnp.asarray([extreme], dtype=jnp.float32))
+
+        np.testing.assert_allclose(
+            prediction,
+            jnp.asarray([0.505], dtype=jnp.float32),
+            rtol=1e-6,
+        )
 
 
 # =============================================================================
