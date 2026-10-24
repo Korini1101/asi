@@ -811,15 +811,18 @@ class AssociativeMemoryLearner:
         )
 
     def _weighted_feature_loss(self, row_values: Array, weights: Array, label: Array) -> Array:
-        evidence = jnp.sum(weights[:, None] * row_values, axis=0)
+        total_weight = jnp.sum(weights)
+        evidence_weights = weights
+        if self._config.normalize_by_weight:
+            # Normalize before reducing so a representable weighted mean does
+            # not first form an unrepresentable unnormalized sum.
+            evidence_weights = jnp.where(total_weight > 0.0, weights / total_weight, weights)
+        evidence = jnp.sum(evidence_weights[:, None] * row_values, axis=0)
         # Center on both sides of the scale, as in the per-row loss below;
         # this value feeds cross entropy only, which is shift invariant.
         centered = evidence - jax.lax.stop_gradient(jnp.max(evidence))
         logits = self._config.logit_scale * centered
         logits = logits - jax.lax.stop_gradient(jnp.max(logits))
-        total_weight = jnp.sum(weights)
-        if self._config.normalize_by_weight:
-            logits = jnp.where(total_weight > 0.0, logits / total_weight, logits)
         loss = _cross_entropy_from_logits(logits, label)
         uniform_loss = jnp.log(jnp.asarray(self._config.vocab_size, dtype=jnp.float32))
         return jnp.where(total_weight > 0.0, loss, uniform_loss)
@@ -849,7 +852,13 @@ class AssociativeMemoryLearner:
         window_scope, window_probs = self._window_scope_weights(state)
         scope_weights = family_scope * window_scope * mask.astype(jnp.float32)
         weights = base_weights * scope_weights
-        weight_col = weights[:, None]
+        total_weight = jnp.sum(weights)
+        evidence_weights = weights
+        if self._config.normalize_by_weight:
+            # Keep the normalized reduction in range before applying the
+            # independently configured logit scale.
+            evidence_weights = jnp.where(total_weight > 0.0, weights / total_weight, weights)
+        weight_col = evidence_weights[:, None]
         # Silent features have weight 0. An inf stored value times that
         # weight is 0*inf = NaN. Skip the product on exact zeros.
         evidence = jnp.sum(
@@ -864,11 +873,6 @@ class AssociativeMemoryLearner:
         # prior's coefficient stays fixed instead of scaling with
         # ``1 / total_weight``.
         scaled_evidence = self._config.logit_scale * evidence
-        total_weight = jnp.sum(weights)
-        if self._config.normalize_by_weight:
-            scaled_evidence = jnp.where(
-                total_weight > 0.0, scaled_evidence / total_weight, scaled_evidence
-            )
         logits = 0.05 * state.prior + scaled_evidence
         probabilities = _softmax(logits)
         return AssociativeMemoryPrediction(
