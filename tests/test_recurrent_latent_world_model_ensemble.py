@@ -462,6 +462,61 @@ def test_member_gradient_validity_is_finiteness_only_not_a_raw_norm_ceiling() ->
     assert bool(result.diagnostics.candidate_state_valid)
 
 
+def test_finite_low_variance_gradients_are_clipped_instead_of_rejected() -> None:
+    """A representable tree norm must survive overflow in the square reduction."""
+    model = RecurrentLatentWorldModelEnsemble(
+        _config(
+            variance_floor=1.0e-25,
+            max_variance=1.0,
+            gradient_clip_norm=1.0,
+            max_raw_gradient_norm=3.0e38,
+            max_loss_magnitude=3.0e38,
+        )
+    )
+    state = model.init(jr.key(24))
+    state = state.replace(  # type: ignore[attr-defined]
+        member_parameters=tuple(
+            parameters.replace(  # type: ignore[attr-defined]
+                variance_bias=jnp.full_like(parameters.variance_bias, -35.0)
+            )
+            for parameters in state.member_parameters
+        )
+    )
+    decision = _decision(model, state)
+    far_bootstrap = jnp.asarray((900.0, -900.0), dtype=jnp.float32)
+    stopped_targets = jnp.concatenate(
+        (far_bootstrap, jnp.asarray((0.5, 0.9), dtype=jnp.float32))
+    )
+    _, gradient = jax.value_and_grad(model._member_nll)(  # noqa: SLF001
+        state.member_parameters[0],
+        state.member_hidden_states[0],
+        OBSERVATION,
+        ACTION,
+        stopped_targets,
+    )
+
+    gradient_leaves = jax.tree_util.tree_leaves(gradient)
+    assert all(bool(jnp.all(jnp.isfinite(leaf))) for leaf in gradient_leaves)
+    direct_norm = jnp.sqrt(
+        jnp.sum(jnp.stack([jnp.sum(jnp.square(leaf)) for leaf in gradient_leaves]))
+    )
+    assert bool(jnp.isinf(direct_norm))
+    assert bool(jnp.isfinite(_tree_l2_norm(gradient)))
+
+    result = model.update(
+        state,
+        decision,
+        _transition(
+            bootstrap_observation=far_bootstrap,
+            next_decision_observation=far_bootstrap,
+        ),
+    )
+    assert bool(result.diagnostics.applied)
+    assert bool(jnp.all(result.diagnostics.member_gradients_valid))
+    assert bool(result.diagnostics.representation_gradient_valid)
+    assert bool(result.diagnostics.candidate_state_valid)
+
+
 def test_late_numeric_rejection_returns_a_retryable_authoritative_cache() -> None:
     """A trusted off-boundary event may recover after a late numerical veto."""
     model = RecurrentLatentWorldModelEnsemble(

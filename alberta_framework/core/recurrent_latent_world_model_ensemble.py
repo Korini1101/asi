@@ -201,11 +201,21 @@ def _tree_equal(left: Any, right: Any) -> Array:
 
 
 def _tree_l2_norm(tree: Any) -> Array:
-    squared = [
-        jnp.sum(jnp.square(jnp.asarray(leaf, dtype=jnp.float32)))
-        for leaf in jax.tree_util.tree_leaves(tree)
+    """Compute a joint float32 norm without squaring at the input scale."""
+    leaves = [
+        jnp.asarray(leaf, dtype=jnp.float32) for leaf in jax.tree_util.tree_leaves(tree)
     ]
-    return jnp.sqrt(jnp.sum(jnp.stack(squared)))
+    scale = jnp.asarray(0.0, dtype=jnp.float32)
+    for leaf in leaves:
+        scale = jnp.maximum(scale, jnp.max(jnp.abs(leaf), initial=0.0))
+    finite_nonzero_scale = jnp.isfinite(scale) & (scale > 0.0)
+    safe_scale = jnp.where(finite_nonzero_scale, scale, 1.0)
+    squared_sum = jnp.asarray(0.0, dtype=jnp.float32)
+    for leaf in leaves:
+        normalized = leaf / safe_scale
+        squared_sum = squared_sum + jnp.sum(jnp.square(normalized))
+    stable_norm = safe_scale * jnp.sqrt(squared_sum)
+    return jnp.where(scale == 0.0, 0.0, jnp.where(jnp.isfinite(scale), stable_norm, scale))
 
 
 def _saturating_increment(value: Array, maximum: int) -> Array:
