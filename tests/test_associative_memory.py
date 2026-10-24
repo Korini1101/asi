@@ -238,6 +238,45 @@ def test_normalized_evidence_stays_finite_when_only_the_sum_overflows() -> None:
     assert bool(second.update_applied)
 
 
+def test_normalized_evidence_stays_finite_at_float32_ceiling() -> None:
+    """Rounding normalized weight mass above one cannot overflow the mean."""
+    learner = AssociativeMemoryLearner(
+        AssociativeMemoryConfig(
+            vocab_size=2,
+            block_size=10,
+            suffix_length=2,
+            feature_family="position_token",
+            max_features=20,
+            write_lr=float(np.finfo(np.float32).max),
+            retention=0.0,
+            utility_lr=0.0,
+            logit_scale=1.0,
+        )
+    )
+    first_context = jnp.zeros((10,), dtype=jnp.int32)
+    second_context = jnp.ones((10,), dtype=jnp.int32)
+    label_zero = jnp.asarray(0, dtype=jnp.int32)
+
+    first = learner.update(learner.init(), first_context, label_zero)
+    second = learner.update(
+        first.state,
+        second_context,
+        jnp.asarray(1, dtype=jnp.int32),
+    )
+    prediction = learner.predict(second.state, first_context)
+    third = learner.update(second.state, first_context, label_zero)
+
+    assert bool(first.update_applied)
+    assert bool(second.update_applied)
+    assert bool(jnp.all(jnp.isfinite(second.state.values)))
+    chex.assert_tree_all_finite(prediction)
+    chex.assert_trees_all_close(
+        prediction.probabilities,
+        jnp.asarray([1.0, 0.0], dtype=jnp.float32),
+    )
+    assert bool(third.update_applied)
+
+
 def test_corrupted_active_family_logits_remain_fail_visible() -> None:
     """An invalid active gate must not masquerade as a uniform valid gate."""
     learner = AssociativeMemoryLearner(
