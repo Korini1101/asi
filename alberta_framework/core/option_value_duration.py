@@ -498,8 +498,18 @@ class OptionValueDurationLearner:
             jnp.zeros_like(next_predictions),
             continuation_discount * next_predictions,
         )
-        td_targets = cumulants + bootstrap
-        td_errors = td_targets - predictions
+        # Keep ordinary rounding. Recover only an overflowing partial sum
+        # whose cancellation against the current prediction is a finite TD error:
+        # reward + V(s') can be outside float32 while reward + (V(s') - V(s)) is not.
+        direct_targets = cumulants + bootstrap
+        direct_td_errors = direct_targets - predictions
+        recovered_td_errors = cumulants + (bootstrap - predictions)
+        td_targets = direct_targets
+        td_errors = jnp.where(
+            jnp.isfinite(direct_targets),
+            direct_td_errors,
+            recovered_td_errors,
+        )
         step_sizes = jnp.array(
             [
                 self._config.reward_step_size,
@@ -558,7 +568,9 @@ class OptionValueDurationLearner:
                 jnp.zeros_like(next_predictions),
             ),
             td_targets=jnp.where(
-                head_updates_applied, td_targets, jnp.zeros_like(td_targets)
+                head_updates_applied & jnp.isfinite(td_targets),
+                td_targets,
+                jnp.zeros_like(td_targets),
             ),
             td_errors=jnp.where(
                 head_updates_applied, td_errors, jnp.zeros_like(td_errors)
