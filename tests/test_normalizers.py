@@ -552,6 +552,32 @@ class TestNormalizerABC:
         [EMANormalizer(), WelfordNormalizer(), StreamingBatchNormalizer()],
         ids=["EMA", "Welford", "StreamingBatch"],
     )
+    def test_update_rejects_observation_dimension_drift(self, normalizer) -> None:
+        """An update cannot broadcast an observation into a new state schema."""
+        state = normalizer.init(1)
+        mismatched = jnp.asarray([1.0, 2.0], dtype=jnp.float32)
+
+        with pytest.raises(ValueError, match="observation shape"):
+            normalizer.normalize_with_diagnostics(state, mismatched)
+
+    @pytest.mark.parametrize(
+        "normalizer",
+        [EMANormalizer(), WelfordNormalizer(), StreamingBatchNormalizer()],
+        ids=["EMA", "Welford", "StreamingBatch"],
+    )
+    def test_normalize_only_rejects_observation_dimension_drift(self, normalizer) -> None:
+        """Inference cannot silently broadcast an observation across features."""
+        state = normalizer.init(1)
+        mismatched = jnp.asarray([1.0, 2.0], dtype=jnp.float32)
+
+        with pytest.raises(ValueError, match="observation shape"):
+            normalizer.normalize_only(state, mismatched)
+
+    @pytest.mark.parametrize(
+        "normalizer",
+        [EMANormalizer(), WelfordNormalizer(), StreamingBatchNormalizer()],
+        ids=["EMA", "Welford", "StreamingBatch"],
+    )
     def test_inf_observation_holds_finite_statistics(self, normalizer) -> None:
         """Inf observation minus an inf mean is inf-inf = NaN.
 
