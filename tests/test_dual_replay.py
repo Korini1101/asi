@@ -322,6 +322,31 @@ def test_record_is_prediction_before_outcome_and_fifo_eviction_is_auditable() ->
     assert int(third.state.short_term_head) == 1
 
 
+@pytest.mark.parametrize("implementation", ["rbg", "unsafe_rbg"])
+def test_persisted_threefry_key_ignores_ambient_prng_default(
+    implementation: str,
+) -> None:
+    expected_memory = DualReplayMemory(_config())
+    actual_memory = DualReplayMemory(_config())
+    expected_state = expected_memory.init(jr.key(23, impl="threefry2x32"))
+    actual_state = actual_memory.init(jr.key(23, impl="threefry2x32"))
+    prediction = _prediction(10)
+    outcome = _outcome(10)
+    version = jnp.asarray(0, dtype=jnp.int32)
+
+    with jax.default_prng_impl("threefry2x32"):
+        expected_write = expected_memory.record(expected_state, prediction, outcome)
+        expected_sample = expected_memory.sample(expected_write.state, version)
+
+    with jax.default_prng_impl(implementation):
+        assert str(jr.key_impl(jr.key(0))) == implementation
+        actual_write = actual_memory.record(actual_state, prediction, outcome)
+        actual_sample = actual_memory.sample(actual_write.state, version)
+
+    _assert_trees_equal(actual_write, expected_write)
+    _assert_trees_equal(actual_sample, expected_sample)
+
+
 def test_all_transition_fields_and_availability_survive_storage_and_sampling() -> None:
     memory = DualReplayMemory(_config(max_representation_lag=0))
     prediction = _prediction(20, version=3, epistemic=0.7, aleatoric=0.2).replace(
