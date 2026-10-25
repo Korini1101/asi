@@ -898,7 +898,7 @@ class HordeSpec:
     lamdas: Float[Array, " n_demons"]
 
     def __post_init__(self) -> None:
-        """Reject an empty, oversized, or type-spoofed demon collection."""
+        """Reject invalid demons or cached question arrays that disagree with them."""
         if type(self.demons) is not tuple or not self.demons:
             raise ValueError("demons must be a nonempty tuple of GVFSpec")
         if len(self.demons) > _MAX_HORDE_DEMONS:
@@ -907,6 +907,19 @@ class HordeSpec:
             )
         if any(type(demon) is not GVFSpec for demon in self.demons):
             raise ValueError("demons must be a nonempty tuple of GVFSpec")
+        expected_caches = {
+            "gammas": np.asarray([demon.gamma for demon in self.demons], dtype=np.float32),
+            "lamdas": np.asarray([demon.lamda for demon in self.demons], dtype=np.float32),
+        }
+        for name, value in (("gammas", self.gammas), ("lamdas", self.lamdas)):
+            if not isinstance(value, Array):
+                raise ValueError(f"{name} must be a concrete float32 JAX array")
+            actual = np.asarray(value)
+            expected = expected_caches[name]
+            if actual.dtype != np.dtype(np.float32) or not np.array_equal(actual, expected):
+                raise ValueError(
+                    f"{name} must exactly cache the demons' normalized {name[:-1]} values"
+                )
 
     def to_config(self) -> dict[str, Any]:
         """Serialize to dict.
