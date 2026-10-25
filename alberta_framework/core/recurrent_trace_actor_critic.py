@@ -254,6 +254,24 @@ def _require_int32(name: str, value: object, *, minimum: int, maximum: int = _IN
     return canonical
 
 
+def _require_typed_threefry_key(name: str, value: object) -> Array:
+    """Reject keys whose physical representation violates the state budget."""
+    if not isinstance(value, jax.Array) or tuple(value.shape) != ():
+        raise ValueError(f"{name} must be a typed scalar threefry2x32 key")
+    try:
+        implementation = str(jr.key_impl(value))
+        words = jr.key_data(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be a typed scalar threefry2x32 key") from error
+    if (
+        implementation != "threefry2x32"
+        or tuple(words.shape) != (2,)
+        or words.dtype != jnp.uint32
+    ):
+        raise ValueError(f"{name} must be a typed scalar threefry2x32 key")
+    return value
+
+
 def _validated_config_float(name: str, value: object, **bounds: Any) -> float:
     if type(value) is bool or type(value) is np.bool_:
         raise ValueError(f"{name} must be numeric, not bool")
@@ -1909,6 +1927,7 @@ class RecurrentTraceActorCriticAgent:
         feature_dim = _require_int32("feature_dim", feature_dim, minimum=1)
         resources = self._config.state_resource_budget(feature_dim)
         _preflight_update_working_set(self._config, resources)
+        key = _require_typed_threefry_key("key", key)
         actor_key, critic_key, policy_key = jr.split(key, 3)
         actor_params = initialize_rtu_network_parameters(
             actor_key,
