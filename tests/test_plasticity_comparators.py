@@ -139,7 +139,9 @@ def test_nap_projection_preserves_radius_when_direct_norm_overflows() -> None:
 
 def test_nap_projection_preserves_radius_when_reciprocal_underflows() -> None:
     weights = jnp.asarray([3.0e38], dtype=jnp.float32)
-    norm = jnp.linalg.norm(weights)
+    wide_norm = np.linalg.norm(np.asarray(weights, dtype=np.float64))
+    assert np.isfinite(wide_norm)
+    norm = jnp.asarray(wide_norm, dtype=jnp.float32)
     assert bool(jnp.isfinite(norm))
     assert float(jnp.asarray(3.0, dtype=jnp.float32) / norm) == 0.0
 
