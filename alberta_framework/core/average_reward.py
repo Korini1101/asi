@@ -2294,6 +2294,45 @@ class DifferentialSARSAAgent:
         )
 
     @functools.partial(jax.jit, static_argnums=(0,))
+    def _rejected_update_result(
+        self,
+        state: DifferentialSARSAState,
+    ) -> DifferentialSARSAUpdateResult:
+        """Report a rejected external-action transaction without a candidate.
+
+        Integrated callers use this when :meth:`select_action` returns its
+        ``-1`` sentinel.  Constructing the ordinary update in that case would
+        index the last Q-value row and form a target from invalid policy input
+        before the transaction eventually rolls back.
+        """
+        self._require_state_contract(state)
+        _, lifetime_capacity_available = _checked_lifetime_words_increment(
+            state.step_words
+        )
+        lifetime_counter_valid = _lifetime_counter_valid(
+            state.step_words,
+            state.step_count,
+        )
+        state_valid = lifetime_counter_valid & self._state_values_valid(state)
+        candidate_state_finite = self._candidate_finite(state)
+        return DifferentialSARSAUpdateResult(
+            state=state,
+            action=state.last_action,
+            q_values=jnp.zeros((self._config.n_actions,), dtype=jnp.float32),
+            td_error=jnp.asarray(0.0, dtype=jnp.float32),
+            average_reward=state.average_reward,
+            reward=jnp.asarray(0.0, dtype=jnp.float32),
+            pre_step_words=state.step_words,
+            post_step_words=state.step_words,
+            lifetime_counter_valid=lifetime_counter_valid,
+            lifetime_capacity_available=lifetime_capacity_available,
+            state_valid=state_valid,
+            input_valid=jnp.asarray(False, dtype=jnp.bool_),
+            candidate_state_finite=candidate_state_finite,
+            update_applied=jnp.asarray(False, dtype=jnp.bool_),
+        )
+
+    @functools.partial(jax.jit, static_argnums=(0,))
     def td_error(
         self,
         state: DifferentialSARSAState,

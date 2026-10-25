@@ -463,6 +463,29 @@ def test_rejected_rollout_updates_advance_the_local_control_stream() -> None:
     _assert_key_equal(second.state.rng_key, second_expected)
 
 
+def test_invalid_next_observation_rejects_before_building_a_control_candidate() -> None:
+    """The ``-1`` selection sentinel must never index the SARSA target."""
+    config = _config(1)
+    agent, _model, _buffer, state = _init(config, seed=43)
+    control = state.control_state
+    result = _update_control_with_linear_rng(
+        agent,
+        control,
+        jnp.array(0.25, dtype=jnp.float32),
+        jnp.full((OBSERVATION_DIM,), jnp.nan, dtype=jnp.float32),
+        jnp.array(0.9, dtype=jnp.float32),
+    )
+
+    assert not bool(result.update_applied)
+    assert not bool(result.input_valid)
+    assert bool(result.candidate_state_finite)
+    expected_key = jr.split(control.rng_key, 4)[0]
+    chex.assert_trees_all_equal(
+        result.state,
+        control.replace(rng_key=expected_key),
+    )
+
+
 def test_eager_jit_and_scan_reproduce_the_same_rng_trajectory() -> None:
     config = _config(2, accepted=True, rollout_horizon=3, candidate_count=2)
     agent, model, buffer, state = _init(config, seed=47)
