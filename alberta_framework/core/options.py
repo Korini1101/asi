@@ -1104,6 +1104,26 @@ def _clipped_epsilon_greedy_importance_ratio(
     return jnp.minimum(ratio, jnp.asarray(clip, dtype=jnp.float32))
 
 
+def _finite_cancelled_td(
+    reward: Array,
+    baseline: Array,
+    bootstrap: Array,
+    prediction: Array,
+) -> Array:
+    """Keep the historical sum unless that partial sum overflows.
+
+    ``((reward - baseline) + bootstrap) - prediction`` is the ordinary
+    association. When ``reward - baseline + bootstrap`` is non-finite but
+    ``bootstrap - prediction`` cancels, the rearranged error can still be
+    finite. A TD error that remains outside float32 stays non-finite so the
+    caller rejects the update.
+    """
+    direct_partial = reward - baseline + bootstrap
+    direct_td = direct_partial - prediction
+    recovered_td = reward - baseline + (bootstrap - prediction)
+    return jnp.where(jnp.isfinite(direct_partial), direct_td, recovered_td)
+
+
 def _differential_q_update(
     q_weights: Array,
     traces: Array,
@@ -1128,7 +1148,7 @@ def _differential_q_update(
 
     q_prev = q_weights[last_action] @ last_obs
     q_next = jnp.max(_q_values_for_obs(q_weights, next_obs))
-    td_error = reward - average_reward + q_next - q_prev
+    td_error = _finite_cancelled_td(reward, average_reward, q_next, q_prev)
 
     action_mask = jax.nn.one_hot(last_action, n_actions, dtype=jnp.float32)
     new_traces = lam * traces + action_mask[:, None] * last_obs[None, :]
@@ -1213,7 +1233,13 @@ def _differential_semidp_q_update(
     q_prev = q_weights[last_action] @ last_obs
     q_next = jnp.max(_q_values_for_obs(q_weights, next_obs))
     # The discounted reward and baseline must use the same γ powers.
-    td_error = reward - average_reward * baseline_coefficient + gamma_o * q_next - q_prev
+    # Pass those products in so a finite sum keeps this association.
+    td_error = _finite_cancelled_td(
+        reward,
+        average_reward * baseline_coefficient,
+        gamma_o * q_next,
+        q_prev,
+    )
 
     action_mask = jax.nn.one_hot(last_action, n_actions, dtype=jnp.float32)
     new_traces = lam * traces + action_mask[:, None] * last_obs[None, :]
@@ -1417,7 +1443,7 @@ def _update_intra_option_policy(
 
     q_prev = q_i[last_intra_action] @ last_obs
     q_next = _discounted_bootstrap(bootstrap_discount, jnp.max(_q_values_for_obs(q_i, next_obs)))
-    td_error = pseudo_reward - avg_r_i + q_next - q_prev
+    td_error = _finite_cancelled_td(pseudo_reward, avg_r_i, q_next, q_prev)
 
     alpha = jnp.asarray(step_size, dtype=jnp.float32)
     beta = jnp.asarray(avg_reward_step_size, dtype=jnp.float32)
