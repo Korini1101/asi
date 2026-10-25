@@ -158,7 +158,7 @@ def _validate_direct_state_resources(
     final_width = hidden_sizes[-1] if hidden_sizes else feature_dim
     head_parameter_count = n_heads * (final_width + 1)
     parameter_count = trunk_parameter_count + head_parameter_count
-    direct_state_scalars = 2 * parameter_count + sum(hidden_sizes) + 3
+    direct_state_scalars = 2 * parameter_count + sum(hidden_sizes) + 3 + n_heads
     for name, value in (
         ("parameter_count", parameter_count),
         ("direct_state_scalars", direct_state_scalars),
@@ -181,7 +181,12 @@ def _direct_state_bytes(
     )
     final_width = hidden_sizes[-1] if hidden_sizes else feature_dim
     head_parameter_count = n_heads * (final_width + 1)
-    return 4 * (2 * (trunk_parameter_count + head_parameter_count) + sum(hidden_sizes) + 3)
+    return 4 * (
+        2 * (trunk_parameter_count + head_parameter_count)
+        + sum(hidden_sizes)
+        + 3
+        + n_heads
+    )
 
 
 def _multi_head_update_result_extras_bytes(n_heads: int) -> int:
@@ -275,6 +280,14 @@ class MultiHeadMLPState:
             shape ``(hidden_sizes[layer],)``. Empty for linear models.
         normalizer_state: Optional online feature normalizer state
         step_count: Saturating int32 compatibility telemetry.
+        previous_discounts: Per-head discount of the most recent accepted
+            transition (``gamma_t``, the discount into the current head's
+            state), carried so a consumer with per-transition discounts can
+            decay head traces with the incoming discount. ``None`` for states
+            built before this field existed; consumers fall back to the
+            demon gammas. Initialized to ones by :meth:`MultiHeadMLPLearner.init`
+            (inert against zero traces); :class:`OffPolicyHordeLearner` seeds
+            it with the Horde spec gammas instead.
         step_words: Exact big-endian ``[high, low]`` uint32 lifetime identity.
         birth_timestamp: Host-only lifecycle metadata. This legacy Python
             float is not part of the persistent JAX learning-state bit
@@ -293,6 +306,7 @@ class MultiHeadMLPState:
     hidden_unit_utilities: tuple[Array, ...] = ()
     normalizer_state: AnyNormalizerState | None = None
     step_count: Array = None  # type: ignore[assignment]
+    previous_discounts: Array | None = None
     step_words: UInt[Array, " 2"] = None  # type: ignore[assignment]
     birth_timestamp: float = 0.0
     uptime_s: float = 0.0
@@ -850,6 +864,7 @@ class MultiHeadMLPLearner:
             ),
             normalizer_state=normalizer_state,
             step_count=jnp.array(0, dtype=jnp.int32),
+            previous_discounts=jnp.ones((self._n_heads,), dtype=jnp.float32),
             step_words=jnp.zeros((2,), dtype=jnp.uint32),
             birth_timestamp=time.time(),
             uptime_s=0.0,
@@ -1387,6 +1402,7 @@ class MultiHeadMLPLearner:
             hidden_unit_utilities=tuple(new_hidden_unit_utilities),
             normalizer_state=new_normalizer_state,
             step_count=_saturating_int32_counter_increment(state.step_count),
+            previous_discounts=state.previous_discounts,
             step_words=counter_status.proposed_step_words,
             birth_timestamp=state.birth_timestamp,
             uptime_s=state.uptime_s,
@@ -1534,15 +1550,19 @@ def migrate_legacy_multi_head_mlp_state(
         field.name
         for field in dataclasses.fields(MultiHeadMLPState)
     }
-    legacy_names = current_names - {"step_words"}
+    # ``step_words`` is derived below. ``previous_discounts`` is optional so
+    # states saved before that field existed still migrate; it stays ``None``
+    # and consumers fall back to the demon gammas.
+    legacy_names = current_names - {"step_words", "previous_discounts"}
     supplied_names = set(fields)
-    if supplied_names != legacy_names:
+    if not legacy_names <= supplied_names or not supplied_names <= current_names:
         missing = sorted(legacy_names - supplied_names)
-        extra = sorted(supplied_names - legacy_names)
+        extra = sorted(supplied_names - current_names)
         raise ValueError(
             "legacy MultiHeadMLP field manifest is not exact; "
             f"missing={missing}, extra={extra}"
         )
+    fields.setdefault("previous_discounts", None)
     step_array = jnp.asarray(fields["step_count"])
     if step_array.shape != () or step_array.dtype != jnp.dtype(jnp.int32):
         raise TypeError("legacy MultiHeadMLP step_count must be scalar int32")

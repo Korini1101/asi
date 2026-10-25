@@ -333,8 +333,12 @@ class OffPolicyHordeLearner:
 
     ``delta_i = c_i + gamma_i V_i(s') - V_i(s)``
 
-    ``z_i <- gamma_i lambda_i min(rho_i, trace_ratio_clip) z_i
-    + min(rho_i, ratio_clip) grad V_i(s)``
+    ``z_i <- gamma_i^prev lambda_i min(rho_i, trace_ratio_clip) z_i
+    + min(rho_i, ratio_clip) grad V_i(s)``, where ``gamma_i^prev`` is the
+    PRIOR call's discount for demon ``i`` (the discount into the state being
+    processed); the current call's discount only controls the TD bootstrap.
+    A terminal transition therefore still credits the episode trace instead
+    of wiping it before the terminal error is applied.
 
     ``w_i <- w_i + alpha delta_i z_i``
 
@@ -466,8 +470,15 @@ class OffPolicyHordeLearner:
         return self._trace_ratio_clip
 
     def init(self, feature_dim: int, key: Array) -> MultiHeadMLPState:
-        """Initialize learner state."""
-        return self._learner.init(feature_dim, key)
+        """Initialize learner state.
+
+        Head traces decay with the PRIOR call's discount (the discount into
+        the state being processed), so the state seeds ``previous_discounts``
+        with the Horde spec gammas; the first call's traces are zero, which
+        makes the seed inert.
+        """
+        state = self._learner.init(feature_dim, key)
+        return state.replace(previous_discounts=self._horde_spec.gammas)
 
     @functools.partial(jax.jit, static_argnums=(0,))
     def predict(self, state: MultiHeadMLPState, observation: Array) -> Array:
@@ -550,6 +561,15 @@ class OffPolicyHordeLearner:
         replacing = self._trace_mode == TraceMode.REPLACING
         counter_status = self._learner._counter_status(state)
 
+        # Head traces decay with the PRIOR call's discount (the discount
+        # into S_t); only the TD bootstrap above uses this call's discounts.
+        # States built before ``previous_discounts`` existed fall back to the
+        # spec gammas, which is also the init seed. Normalizing here keeps
+        # the committed-state pytree identical on both lax.cond branches.
+        if state.previous_discounts is None:
+            state = state.replace(previous_discounts=self._horde_spec.gammas)
+        previous_discounts = state.previous_discounts
+
         rhos = jnp.asarray(rhos, dtype=jnp.float32)
         discounts = jnp.asarray(discounts, dtype=jnp.float32)
         clipped_rhos = jnp.minimum(
@@ -587,7 +607,7 @@ class OffPolicyHordeLearner:
             )
         lamdas = self._horde_spec.lamdas
         head_decay_unused = jnp.all(
-            (discounts == 0.0) | (jnp.asarray(lamdas, dtype=jnp.float32) == 0.0)
+            (previous_discounts == 0.0) | (jnp.asarray(lamdas, dtype=jnp.float32) == 0.0)
         )
         checked_state = checked_state.replace(  # type: ignore[attr-defined]
             head_traces=tuple(
@@ -615,7 +635,7 @@ class OffPolicyHordeLearner:
         safe_targets = jnp.where(active_mask, td_targets, 0.0)
         safe_clipped_rhos = jnp.where(active_mask, clipped_rhos, 0.0)
         safe_trace_coefficients = jnp.where(active_mask, trace_coefficients, 0.0)
-        safe_discounts = jnp.where(active_mask, discounts, 0.0)
+        safe_previous_discounts = jnp.where(active_mask, previous_discounts, 0.0)
 
         obs = observation
         new_normalizer_state = state.normalizer_state
@@ -792,7 +812,7 @@ class OffPolicyHordeLearner:
             safe_hidden = jnp.where(active_mask[i], hidden, jnp.zeros_like(hidden))
             w_grad = safe_clipped_rhos[i] * safe_hidden.reshape(1, -1)
             b_grad = safe_clipped_rhos[i] * jnp.ones(1, dtype=jnp.float32)
-            head_gl = safe_discounts[i] * lamdas[i] * safe_trace_coefficients[i]
+            head_gl = safe_previous_discounts[i] * lamdas[i] * safe_trace_coefficients[i]
 
             if replacing:
                 new_w_trace = jnp.where(
@@ -916,6 +936,9 @@ class OffPolicyHordeLearner:
             head_traces=tuple(new_head_traces),
             hidden_unit_utilities=tuple(new_hidden_unit_utilities),
             normalizer_state=new_normalizer_state,
+            previous_discounts=jnp.where(
+                active_mask, discounts, previous_discounts
+            ),
             step_count=_saturating_int32_counter_increment(state.step_count),
             step_words=counter_status.proposed_step_words,
             birth_timestamp=state.birth_timestamp,
