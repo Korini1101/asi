@@ -322,6 +322,48 @@ def test_valid_typed_message_is_accepted_and_arms_exact_feedback_record() -> Non
     )
 
 
+def test_jit_preserves_large_finite_context_ratio_in_partner_routing() -> None:
+    fusion = _fusion(
+        max_partners=1,
+        context_dim=1,
+        n_actions=2,
+        max_abs_context=1.0e38,
+        accept_net_value_threshold=0.7,
+        blend_net_value_threshold=0.6,
+    )
+    state = _replace(
+        fusion.init(),
+        reliability_weights=jnp.asarray([[-2.0, 6.0, 0.0]], dtype=jnp.float32),
+    )
+    messages = _messages(fusion, [{"suggested_action": 1}])
+
+    def decide(current: PartnerPolicyFusionState, context: Any) -> Any:
+        return fusion.decide(
+            current,
+            decision_id=jnp.asarray(10, dtype=jnp.int32),
+            event_id=jnp.asarray(20, dtype=jnp.int32),
+            observation_id=jnp.asarray(30, dtype=jnp.int32),
+            context_id=jnp.asarray(40, dtype=jnp.int32),
+            context_features=context,
+            base_action=jnp.asarray(0, dtype=jnp.int32),
+            base_declared_score=jnp.asarray(0.0, dtype=jnp.float32),
+            safety_action_mask=jnp.asarray([True, True]),
+            option_proposal=fusion.empty_option_proposal(),
+            messages=messages,
+        )
+
+    context = jnp.asarray([5.0e37], dtype=jnp.float32)
+    eager = decide(state, context)
+    compiled = jax.jit(decide)(state, context)
+
+    assert int(eager.decision.route) == ROUTE_ACCEPT
+    assert int(eager.decision.effective_action) == 1
+    assert float(eager.decision.scores.selected_predicted_reliability) == pytest.approx(
+        float(jax.nn.sigmoid(jnp.float32(1.0)))
+    )
+    _assert_tree_equal(compiled, eager)
+
+
 @pytest.mark.parametrize(
     "entry",
     [

@@ -185,6 +185,24 @@ def _finite_l2_norm(value: Array) -> Array:
     return jnp.where(jnp.isfinite(norm), norm, jnp.float32(_FLOAT32_MAX))
 
 
+def _divide_by_positive_float32_scale(value: Array, scale: float) -> Array:
+    """Divide by a configured scale without a flushed reciprocal.
+
+    XLA:CPU can lower division by a scalar to reciprocal multiplication.  A
+    reciprocal below the smallest normal float32 then flushes to zero, even
+    though ``value / scale`` is representable because ``abs(value) <= scale``.
+    Preserve the existing direct operation for ordinary scales and decompose
+    only the affected extreme range into an exact power of two and a normal
+    mantissa.
+    """
+
+    scale_array = jnp.asarray(scale, dtype=jnp.float32)
+    if scale <= 1.0 / _FLOAT32_TINY:
+        return value / scale_array
+    mantissa, exponent = math.frexp(scale)
+    return jnp.ldexp(value, -exponent) / jnp.asarray(mantissa, dtype=jnp.float32)
+
+
 def _safe_action_lookup(mask: Array, action: Array, n_actions: int) -> Array:
     """Read an action mask without allowing an out-of-range gather."""
 
@@ -1163,7 +1181,9 @@ class PartnerPolicyFusion:
 
         safe_context = jnp.where(context_valid, context_features, 0.0)
         normalized_context = jnp.clip(
-            safe_context / jnp.float32(cfg.max_abs_context), -1.0, 1.0
+            _divide_by_positive_float32_scale(safe_context, cfg.max_abs_context),
+            -1.0,
+            1.0,
         )
         safe_confidences = jnp.where(
             jnp.isfinite(messages.declared_confidence),
