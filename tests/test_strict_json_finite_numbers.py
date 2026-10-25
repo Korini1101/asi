@@ -230,3 +230,13 @@ def test_shared_strict_loader_preserves_finite_floats_and_arbitrary_integers(
         "small": -1e-200,
         "integer": integer,
     }
+
+
+def test_shared_strict_loader_rejects_symlink(tmp_path: Path) -> None:
+    target = tmp_path / "target.json"
+    target.write_text('{"value":1}', encoding="utf-8")
+    alias = tmp_path / "alias.json"
+    alias.symlink_to(target)
+
+    with pytest.raises(ValueError, match="regular file|symlink"):
+        load_strict_json_object(alias)
