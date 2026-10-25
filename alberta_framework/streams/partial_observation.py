@@ -32,7 +32,6 @@ from jax import Array
 from jaxtyping import Bool, PRNGKeyArray
 
 from alberta_framework.core._float32_scalars import validated_float32_scalar
-from alberta_framework.core.normalizers import _saturating_int32_counter_increment
 from alberta_framework.core.types import TimeStep
 from alberta_framework.streams.base import ScanStream
 
@@ -260,8 +259,12 @@ class PartialObservationWrapper[InnerStateT]:
             mask = jr.uniform(k_use, (self._inner.feature_dim,)) < self._mask_prob
         else:  # PERIODIC
             assert self._schedule is not None
-            mask = self._schedule[state.period_index % self._schedule.shape[0]]
-            new_period_index = _saturating_int32_counter_increment(state.period_index)
+            schedule_length = jnp.asarray(self._schedule.shape[0], dtype=jnp.int32)
+            # Persist the bounded phase itself: a saturated lifetime counter
+            # would pin one mask forever once it reached int32 max.
+            phase = jnp.mod(state.period_index, schedule_length)
+            mask = self._schedule[phase]
+            new_period_index = jnp.mod(phase + jnp.int32(1), schedule_length)
 
         masked_obs = jnp.where(
             mask,
