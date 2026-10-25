@@ -411,7 +411,22 @@ class CumulantDiscovery:
         # weights_i += alpha * td_i * obs
         proposed_weights = state.weights + alpha * td[:, None] * observation[None, :]
         proposed_biases = state.biases + alpha * td
-        proposed_utility = decay * state.utility + (1.0 - decay) * (td**2)
+        utility_weight = 1.0 - decay
+        squared_td = td**2
+        direct_surprise = utility_weight * squared_td
+        # A finite TD error can overflow when squared even though applying the
+        # EMA weight first leaves the weighted square representable. Preserve
+        # the ordinary expression bit-for-bit and reassociate only that
+        # overflow case.
+        square_overflowed = jnp.isfinite(td) & ~jnp.isfinite(squared_td)
+        fallback_td = jnp.where(square_overflowed, td, 0.0)
+        reassociated_surprise = (utility_weight * fallback_td) * fallback_td
+        weighted_surprise = jnp.where(
+            square_overflowed,
+            reassociated_surprise,
+            direct_surprise,
+        )
+        proposed_utility = decay * state.utility + weighted_surprise
         proposed_state = CumulantDiscoveryState(  # type: ignore[call-arg]
             projections=state.projections,
             weights=proposed_weights,
