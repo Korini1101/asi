@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import itertools
 import math
+from fractions import Fraction
 
 import jax
 import jax.numpy as jnp
@@ -294,6 +295,22 @@ def test_executed_control_scalars_are_canonical_actual_float32_values() -> None:
         assert getattr(discounted, name) == float(np.float32(raw))
     assert differential.core_config().q_step_size == differential.q_step_size
     assert discounted.core_config().gamma == discounted.gamma
+
+
+def test_control_scalars_round_exact_reals_directly_to_float32() -> None:
+    environment = SwitchingTwoStateConfig(phase_length=2)  # type: ignore[call-arg]
+    midpoint = Fraction(1, 1) + Fraction(1, 2**24)
+    above_midpoint = midpoint + Fraction(1, 2**100)
+    expected = float(np.nextafter(np.float32(1.0), np.float32(2.0)))
+
+    differential = DifferentialSARSAReferenceConfig.for_switching(
+        environment,
+        q_step_size=above_midpoint,
+    )
+
+    assert differential.q_step_size == expected
+    assert differential.core_config().q_step_size == expected
+    assert differential.to_config()["q_step_size"] == expected
 
 
 def test_oracle_environment_scalars_bind_the_executed_float32_values() -> None:

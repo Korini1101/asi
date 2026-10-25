@@ -14,7 +14,6 @@ import hashlib
 import json
 import math
 import re
-from numbers import Real
 from typing import Any, Literal, cast
 
 import jax
@@ -24,6 +23,7 @@ import numpy as np
 from jax import Array
 
 from alberta_framework._bounded_containers import require_json_text_nesting
+from alberta_framework._float32 import round_real_to_float32_with_ratio
 from alberta_framework.core.average_reward import (
     DifferentialSARSAAgent,
     DifferentialSARSAConfig,
@@ -138,33 +138,43 @@ def _canonical_float32(
 ) -> float:
     """Return the actual executed float32 value after checking both domains."""
 
-    if not isinstance(value, Real) or isinstance(value, (bool, np.bool_)):
-        raise ValueError(f"{name} must be a real non-boolean float32 scalar")
     try:
-        raw = float(value)
-        with np.errstate(over="ignore", invalid="ignore", under="ignore"):
-            converted = float(np.float32(raw))
+        numerator, denominator, converted = round_real_to_float32_with_ratio(value)
     except (TypeError, ValueError, OverflowError) as exc:
-        raise ValueError(f"{name} must be a finite float32 value") from exc
-    if not math.isfinite(raw) or not math.isfinite(converted):
+        raise ValueError(f"{name} must be a real non-boolean float32 scalar") from exc
+    if not math.isfinite(converted):
         raise ValueError(f"{name} must be a finite float32 value")
 
-    def in_bounds(candidate: float) -> bool:
+    def compare_to_boundary(boundary: float) -> int:
+        boundary_numerator, boundary_denominator = boundary.as_integer_ratio()
+        return (
+            numerator * boundary_denominator
+            - boundary_numerator * denominator
+        )
+
+    def converted_in_bounds(candidate: float) -> bool:
         lower_ok = candidate >= minimum if minimum_inclusive else candidate > minimum
         upper_ok = candidate <= maximum if maximum_inclusive else candidate < maximum
         return lower_ok and upper_ok
 
-    if not in_bounds(raw):
+    lower_comparison = compare_to_boundary(minimum)
+    upper_comparison = compare_to_boundary(maximum)
+    exact_in_bounds = (
+        lower_comparison >= 0 if minimum_inclusive else lower_comparison > 0
+    ) and (
+        upper_comparison <= 0 if maximum_inclusive else upper_comparison < 0
+    )
+    if not exact_in_bounds:
         left = "[" if minimum_inclusive else "("
         right = "]" if maximum_inclusive else ")"
         raise ValueError(
             f"{name} must remain in {left}{minimum}, {maximum}{right} as float32"
         )
-    if not minimum_inclusive and raw > minimum and converted == minimum:
+    if not minimum_inclusive and lower_comparison > 0 and converted == minimum:
         raise ValueError(f"{name} must not collapse to its strict float32 lower bound")
-    if not maximum_inclusive and raw < maximum and converted == maximum:
+    if not maximum_inclusive and upper_comparison < 0 and converted == maximum:
         raise ValueError(f"{name} must not round to its strict float32 upper bound")
-    if not in_bounds(converted):
+    if not converted_in_bounds(converted):
         left = "[" if minimum_inclusive else "("
         right = "]" if maximum_inclusive else ")"
         raise ValueError(
