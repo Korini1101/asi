@@ -70,6 +70,7 @@ from alberta_framework.core.multi_head_learner import (
 from alberta_framework.core.optimizers import Bounder
 from alberta_framework.core.types import TraceMode
 from alberta_framework.core.update_safety import (
+    checked_integer_action_array,
     floating_tree_is_finite,
     neutralize_array,
     safe_discrete_action,
@@ -1116,9 +1117,18 @@ def run_latent_world_model_learning_loop(
     if model.config.n_actions is not None:
         if act_shape != (num_steps,):
             raise ValueError(f"actions must have shape ({num_steps},)")
+        safe_actions, actions_valid = checked_integer_action_array(
+            actions,
+            model.config.n_actions,
+            name="actions",
+            expected_shape=(num_steps,),
+            range_message="actions must be in the discrete action range",
+        )
+        act_array = jnp.where(actions_valid, safe_actions, -1).astype(jnp.int32)
     else:
         if act_shape != (num_steps, model.config.action_dim):
             raise ValueError(f"actions must have shape ({num_steps}, {model.config.action_dim})")
+        act_array = jnp.asarray(actions, dtype=jnp.float32)
 
     rew_shape = _require_scan_array_metadata("rewards", rewards)
     if rew_shape != (num_steps,):
@@ -1141,11 +1151,6 @@ def run_latent_world_model_learning_loop(
     obs_array = jnp.asarray(observations, dtype=jnp.float32)
     next_obs_array = jnp.asarray(next_observations, dtype=jnp.float32)
     rew_array = jnp.asarray(rewards, dtype=jnp.float32)
-    act_array = (
-        jnp.asarray(actions, dtype=jnp.int32)
-        if model.config.n_actions is not None
-        else jnp.asarray(actions, dtype=jnp.float32)
-    )
 
     def _scan_fn(
         carry: LatentWorldModelState,

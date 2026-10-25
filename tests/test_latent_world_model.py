@@ -126,6 +126,31 @@ def test_latent_default_discounts_do_not_inherit_the_reward_dtype() -> None:
     )
     chex.assert_trees_all_close(defaulted.discount_errors, explicit.discount_errors)
     chex.assert_trees_all_close(defaulted.discount_predictions, explicit.discount_predictions)
+
+
+def test_latent_learning_loop_rejects_fractional_discrete_action_array() -> None:
+    config = LatentWorldModelConfig(
+        observation_dim=2,
+        n_actions=2,
+        latent_dim=4,
+        hidden_sizes=(),
+    )
+    model = LatentWorldModel(config)
+    state = model.init(jr.key(4))
+    observations = jnp.array([[0.0, 0.0]], dtype=jnp.float32)
+    next_observations = jnp.array([[0.1, 0.0]], dtype=jnp.float32)
+
+    with pytest.raises(ValueError, match="actions must have an integer dtype"):
+        run_latent_world_model_learning_loop(
+            model,
+            state,
+            observations,
+            jnp.array([0.5], dtype=jnp.float32),
+            jnp.array([0.0], dtype=jnp.float32),
+            next_observations,
+        )
+
+
 class _FloatSpoof:
     @property
     def __class__(self) -> type[float]:  # type: ignore[override]
