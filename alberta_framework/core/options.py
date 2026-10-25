@@ -87,7 +87,9 @@ def _require_concrete_finite(name: str, value: Array) -> Array:
     Traced inputs pass through because runtime gates remain authoritative
     under ``jax.jit`` and ``jax.lax.scan``.
     """
-    if not isinstance(value, jax.core.Tracer) and not bool(jnp.all(jnp.isfinite(value))):
+    if not isinstance(value, jax.core.Tracer) and not bool(
+        np.all(np.isfinite(np.asarray(value)))
+    ):
         raise ValueError(f"{name} must contain only finite values")
     return value
 

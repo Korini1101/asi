@@ -110,6 +110,23 @@ def test_stomp_start_rejects_nonfinite_observation(bad_value: float) -> None:
     assert bool(agent.state_valid(traced_started))
 
 
+def test_stomp_start_allows_concrete_observation_captured_by_trace() -> None:
+    agent = _agent()
+    source = agent.init(jr.key(19))
+    valid_observation = jnp.asarray((0.5, -0.25, 1.0), dtype=jnp.float32)
+
+    nested_traced_started = jax.jit(
+        lambda current: jax.lax.cond(
+            jnp.asarray(True),
+            lambda selected: agent.start(selected, valid_observation),
+            lambda selected: selected,
+            current,
+        )
+    )(source)
+    chex.assert_trees_all_equal(nested_traced_started.base_last_obs, valid_observation)
+    assert bool(agent.state_valid(nested_traced_started))
+
+
 class TestStompCheckpointRoundTrip:
     """Current-format payloads must round-trip losslessly."""
 
