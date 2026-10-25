@@ -57,6 +57,19 @@ class TestSparseInit:
 
         assert not jnp.allclose(w1, w2)
 
+    @pytest.mark.parametrize(
+        "key",
+        [
+            jr.PRNGKey(0),
+            jr.key(0, impl="rbg"),
+            jr.split(jr.key(0), 2),
+        ],
+    )
+    def test_requires_typed_scalar_threefry_key(self, key):
+        """Initializer roots must bind ASI runs to the Threefry algorithm."""
+        with pytest.raises(ValueError, match="typed scalar threefry2x32 key"):
+            sparse_init(key, (2, 4), sparsity=0.5)
+
     def test_zero_sparsity(self):
         """With sparsity=0, all weights should be non-zero."""
         key = jr.key(42)

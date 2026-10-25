@@ -62,6 +62,24 @@ def _require_init_type(value: object) -> str:
     return value
 
 
+def _require_typed_threefry_key(value: object) -> Array:
+    """Require one typed scalar Threefry key at the public RNG boundary."""
+    try:
+        key = jnp.asarray(value)
+        implementation = str(jr.key_impl(value))  # type: ignore[arg-type]
+        words = jr.key_data(value)  # type: ignore[arg-type]
+    except Exception as error:
+        raise ValueError("key must be a typed scalar threefry2x32 key") from error
+    if (
+        key.shape != ()
+        or implementation != "threefry2x32"
+        or words.shape != (2,)
+        or words.dtype != jnp.uint32
+    ):
+        raise ValueError("key must be a typed scalar threefry2x32 key")
+    return key
+
+
 def sparse_init(
     key: Array,
     shape: tuple[int, int],
@@ -102,6 +120,7 @@ def sparse_init(
     # weights has shape (128, 10), ~90% zeros per row
     ```
     """
+    key = _require_typed_threefry_key(key)
     if type(shape) not in (tuple, list) or len(shape) != 2:
         raise ValueError("shape must be a two-element tuple or list (fan_out, fan_in)")
     # Extract without invoking hostile __iter__ hooks beyond the exact tuple/list check
