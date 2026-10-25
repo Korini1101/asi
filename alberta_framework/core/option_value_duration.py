@@ -668,6 +668,10 @@ def run_option_value_duration_from_arrays(
             continuation_discounts,
         ),
     )
+    # Concrete calls must finish device work before recording active uptime.
+    # Traced calls defer execution to their caller.
+    if not isinstance(td_errors, jax.core.Tracer):
+        td_errors.block_until_ready()
     final_state = final_state.replace(uptime_s=final_state.uptime_s + (time.time() - start))
     return OptionValueDurationArrayResult(
         state=final_state,

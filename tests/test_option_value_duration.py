@@ -754,3 +754,61 @@ def test_array_runner_accepts_jax_arrays_under_jit() -> None:
     )
     result = compiled(observations, option_indices, rewards, observations, discounts)
     chex.assert_tree_all_finite(result.predictions)
+
+
+def test_array_runner_finishes_device_work_before_stopping_uptime_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time
+    from types import SimpleNamespace
+
+    import alberta_framework.core.option_value_duration as module
+
+    learner = OptionValueDurationLearner(3, OptionValueDurationConfig())
+    state = learner.init(5)
+    steps = 2
+    observations = jnp.full((steps, 5), 0.1, dtype=jnp.float32)
+    option_indices = jnp.zeros((steps,), dtype=jnp.int32)
+    rewards = jnp.full((steps,), 0.2, dtype=jnp.float32)
+    discounts = jnp.full((steps,), 0.9, dtype=jnp.float32)
+    real_scan = jax.lax.scan
+    real_time = time.time
+
+    class _PendingOutput:
+        def __init__(self) -> None:
+            self.ready = False
+
+        def block_until_ready(self) -> object:
+            self.ready = True
+            return self
+
+    pending_outputs: list[_PendingOutput] = []
+
+    def recording_scan(*args: object, **kwargs: object) -> object:
+        final_state, outputs = real_scan(*args, **kwargs)
+        output_values = list(outputs)
+        pending = _PendingOutput()
+        pending_outputs.append(pending)
+        output_values[3] = pending
+        return final_state, tuple(output_values)
+
+    def clock() -> float:
+        if pending_outputs:
+            assert pending_outputs[0].ready
+        return real_time()
+
+    monkeypatch.setattr(jax.lax, "scan", recording_scan)
+    monkeypatch.setattr(module, "time", SimpleNamespace(time=clock))
+    result = run_option_value_duration_from_arrays(
+        learner,
+        state,
+        observations,
+        option_indices,
+        rewards,
+        observations,
+        discounts,
+    )
+
+    assert pending_outputs
+    assert int(result.state.step_count) == steps
+    assert bool(jnp.all(result.updates_applied))
