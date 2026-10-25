@@ -189,6 +189,29 @@ class TestAdam:
         chex.assert_trees_all_close(state.m, jnp.zeros((3, 4)))
         chex.assert_trees_all_close(state.v, jnp.zeros((3, 4)))
 
+    def test_parameter_update_rejects_broadcastable_gradient_shape(self) -> None:
+        """A missing leading axis must fail instead of broadcasting across rows."""
+        optimizer = Adam()
+        state = optimizer.init_for_shape((2, 2))
+
+        with pytest.raises(ValueError, match="gradient shape must match optimizer state"):
+            optimizer.update_from_gradient_checked(
+                state,
+                jnp.ones((2,), dtype=jnp.float32),
+            )
+
+    def test_parameter_update_rejects_broadcastable_parameter_shape(self) -> None:
+        """AdamW decay must not broadcast one parameter row across the matrix."""
+        optimizer = Adam(weight_decay=0.1)
+        state = optimizer.init_for_shape((2, 2))
+
+        with pytest.raises(ValueError, match="param shape must match optimizer state"):
+            optimizer.update_from_gradient_checked(
+                state,
+                jnp.ones((2, 2), dtype=jnp.float32),
+                param=jnp.ones((2,), dtype=jnp.float32),
+            )
+
     def test_bias_correction_at_t1(self):
         """At t=1, bias-corrected first moment should equal the gradient.
 
@@ -410,6 +433,17 @@ class TestRMSprop:
         assert isinstance(state, RMSpropParamState)
         chex.assert_shape(state.v, (3, 4))
         chex.assert_trees_all_close(state.v, jnp.zeros((3, 4)))
+
+    def test_parameter_update_rejects_broadcastable_gradient_shape(self) -> None:
+        """A missing leading axis must fail instead of broadcasting across rows."""
+        optimizer = RMSprop()
+        state = optimizer.init_for_shape((2, 2))
+
+        with pytest.raises(ValueError, match="gradient shape must match optimizer state"):
+            optimizer.update_from_gradient_checked(
+                state,
+                jnp.ones((2,), dtype=jnp.float32),
+            )
 
     def test_zero_decay_does_not_multiply_inf_second_moment(self):
         """decay=0 times an infinite squared-gradient EMA is NaN."""

@@ -99,6 +99,16 @@ def _require_shape_scalars(shape: object) -> int:
     return total
 
 
+def _require_matching_shape(name: str, value: object, expected: tuple[int, ...]) -> None:
+    """Reject broadcastable aliases before they can change optimizer state shape."""
+    try:
+        actual = tuple(cast(Any, value).shape)
+    except (AttributeError, TypeError) as error:
+        raise ValueError(f"{name} must expose an exact shape") from error
+    if actual != expected:
+        raise ValueError(f"{name} shape must match optimizer state")
+
+
 def _preflight_optimizer_resources(
     name: str,
     n: int,
@@ -692,6 +702,12 @@ class Adam(Optimizer[Any]):
             ValueError: If ``weight_decay`` is nonzero and ``param`` is
                 not provided.
         """
+        state_shape = tuple(state.m.shape)
+        if tuple(state.v.shape) != state_shape:
+            raise ValueError("Adam moment shapes must match")
+        _require_matching_shape("gradient", gradient, state_shape)
+        if param is not None:
+            _require_matching_shape("param", param, state_shape)
         if self._weight_decay != 0.0 and param is None:
             raise ValueError("nonzero weight_decay requires passing param")
 
@@ -994,6 +1010,7 @@ class RMSprop(Optimizer[Any]):
         Returns:
             ``(step, new_state)`` -- step has the same shape as gradient
         """
+        _require_matching_shape("gradient", gradient, tuple(state.v.shape))
         if error is not None:
             g = -jnp.squeeze(error) * gradient
         else:
