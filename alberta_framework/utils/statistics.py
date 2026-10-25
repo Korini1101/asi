@@ -920,9 +920,19 @@ def pairwise_comparisons(
     final_window = common_final_window(
         {name: arr.shape[1] for name, arr in metric_arrays.items()}, window, metric
     )
-    final_values: dict[str, NDArray[np.float64]] = {
-        name: np.mean(arr[:, -final_window:], axis=1) for name, arr in metric_arrays.items()
-    }
+    final_values: dict[str, NDArray[np.float64]] = {}
+    for name, arr in metric_arrays.items():
+        window_values = arr[:, -final_window:]
+        _require_finite_values(window_values, name=f"metric '{name}' final window")
+        scaled, scales = _scaled_float64_values(
+            window_values,
+            name=f"metric '{name}' final window",
+            axis=1,
+        )
+        with np.errstate(over="ignore", invalid="ignore"):
+            final_mean = np.mean(scaled, axis=1) * np.squeeze(scales, axis=1)
+        _require_finite_statistics(final_mean, name=f"metric '{name}' final window")
+        final_values[name] = final_mean
 
     if test not in ("ttest", "mann_whitney", "wilcoxon"):
         raise ValueError(f"Unknown test: {test}")
