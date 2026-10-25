@@ -20,6 +20,28 @@ from alberta_framework import (
 )
 
 
+@pytest.mark.parametrize(
+    ("normalizer", "missing_field"),
+    [
+        (EMANormalizer(epsilon=1e-6, decay=0.75), "epsilon"),
+        (EMANormalizer(epsilon=1e-6, decay=0.75), "decay"),
+        (WelfordNormalizer(epsilon=1e-6), "epsilon"),
+        (StreamingBatchNormalizer(epsilon=1e-4, momentum=0.75), "epsilon"),
+        (StreamingBatchNormalizer(epsilon=1e-4, momentum=0.75), "momentum"),
+    ],
+)
+def test_from_config_rejects_missing_constructor_parameters(
+    normalizer: EMANormalizer | WelfordNormalizer | StreamingBatchNormalizer,
+    missing_field: str,
+) -> None:
+    """A truncated saved config must not silently adopt constructor defaults."""
+    config = normalizer.to_config()
+    del config[missing_field]
+
+    with pytest.raises(ValueError, match="missing required fields"):
+        normalizer_from_config(config)
+
+
 class TestEMANormalizer:
     """Tests for the EMANormalizer class."""
 

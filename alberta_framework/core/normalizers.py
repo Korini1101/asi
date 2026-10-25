@@ -1073,6 +1073,7 @@ def normalizer_from_config(config: dict[str, Any]) -> Normalizer[Any]:
     config = dict(config)
     type_name = config.pop("type")
     host_type_name = _require_exact_str("type_name", type_name)
+    versioned_state_schema_declared = "state_schema" in config
     state_schema = _require_exact_str(
         "state_schema", config.pop("state_schema", NORMALIZER_STATE_SCHEMA)
     )
@@ -1125,6 +1126,17 @@ def normalizer_from_config(config: dict[str, Any]) -> Normalizer[Any]:
     cls = _NORMALIZER_REGISTRY.get(host_type_name)
     if cls is None:
         raise ValueError(f"Unknown normalizer type: '{host_type_name}'")
+    required_parameters = {
+        "EMANormalizer": {"epsilon", "decay"},
+        "WelfordNormalizer": {"epsilon"},
+        "StreamingBatchNormalizer": {"epsilon", "momentum"},
+    }[host_type_name]
+    missing_parameters = required_parameters - config.keys()
+    if versioned_state_schema_declared and missing_parameters:
+        raise ValueError(
+            "normalizer config is missing required fields: "
+            f"{sorted(missing_parameters)}"
+        )
     result: Normalizer[Any] = cls(**config)
     return result
 
