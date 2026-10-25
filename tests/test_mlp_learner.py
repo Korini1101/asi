@@ -251,6 +251,66 @@ class TestMLPLearner:
 class TestRunMLPLearningLoop:
     """Tests for the run_mlp_learning_loop function."""
 
+    @pytest.mark.parametrize("tracking", [False, True])
+    def test_finishes_device_work_before_stopping_uptime_clock(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tracking: bool,
+    ) -> None:
+        """Reported uptime must cover the asynchronous scan, not just dispatch."""
+        from types import SimpleNamespace
+
+        import alberta_framework.core.learners as module
+
+        stream = RandomWalkStream(feature_dim=5)
+        learner = MLPLearner(
+            hidden_sizes=(4,),
+            sparsity=0.0,
+            normalizer=EMANormalizer() if tracking else None,
+        )
+        blocked: list[object] = []
+        real_scan = jax.lax.scan
+        real_time = time.time
+        scan_finished = False
+
+        def recording_scan(*args: object, **kwargs: object) -> object:
+            nonlocal scan_finished
+            result = real_scan(*args, **kwargs)
+            scan_finished = True
+            return result
+
+        def recording_block(value: object) -> object:
+            blocked.append(value)
+            return value
+
+        def clock() -> float:
+            if scan_finished:
+                assert blocked
+            return real_time()
+
+        monkeypatch.setattr(jax.lax, "scan", recording_scan)
+        monkeypatch.setattr(jax, "block_until_ready", recording_block)
+        monkeypatch.setattr(module, "time", SimpleNamespace(time=clock))
+
+        result = run_mlp_learning_loop(
+            learner,
+            stream,
+            num_steps=8,
+            key=jr.key(271),
+            normalizer_tracking=(
+                NormalizerTrackingConfig(interval=4) if tracking else None
+            ),
+        )
+        state, metrics = result[:2]
+
+        assert len(blocked) == 1
+        assert isinstance(blocked[0], tuple)
+        blocked_state, blocked_metrics = blocked[0]
+        assert int(blocked_state.step_count) == 8
+        assert blocked_metrics is metrics
+        assert int(state.step_count) == 8
+        chex.assert_shape(metrics, (8, 4 if tracking else 3))
+
     def test_scan_loop_produces_correct_shapes(self):
         """Scan loop should return metrics with shape (num_steps, 3)."""
         stream = RandomWalkStream(feature_dim=5, drift_rate=0.001)
@@ -304,6 +364,66 @@ class TestRunMLPLearningLoop:
 
 class TestBatchedMLPLearningLoop:
     """Tests for the run_mlp_learning_loop_batched function."""
+
+    @pytest.mark.parametrize("tracking", [False, True])
+    def test_finishes_device_work_before_stopping_uptime_clock(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tracking: bool,
+    ) -> None:
+        """Batched uptime must include completion of the transformed scan."""
+        from types import SimpleNamespace
+
+        import alberta_framework.core.learners as module
+
+        stream = RandomWalkStream(feature_dim=5)
+        learner = MLPLearner(
+            hidden_sizes=(4,),
+            sparsity=0.0,
+            normalizer=EMANormalizer() if tracking else None,
+        )
+        real_vmap = jax.vmap
+        real_time = time.time
+        vmap_finished = False
+        blocked_after_vmap: list[bool] = []
+
+        def recording_vmap(*args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+            transformed = real_vmap(*args, **kwargs)
+
+            def run(*run_args: object, **run_kwargs: object) -> object:
+                nonlocal vmap_finished
+                result = transformed(*run_args, **run_kwargs)
+                vmap_finished = True
+                return result
+
+            return run
+
+        def recording_block(value: object) -> object:
+            blocked_after_vmap.append(vmap_finished)
+            return value
+
+        def clock() -> float:
+            if vmap_finished:
+                assert any(blocked_after_vmap)
+            return real_time()
+
+        monkeypatch.setattr(jax, "vmap", recording_vmap)
+        monkeypatch.setattr(jax, "block_until_ready", recording_block)
+        monkeypatch.setattr(module, "time", SimpleNamespace(time=clock))
+
+        result = run_mlp_learning_loop_batched(
+            learner,
+            stream,
+            num_steps=8,
+            keys=jr.split(jr.key(272), 2),
+            normalizer_tracking=(
+                NormalizerTrackingConfig(interval=4) if tracking else None
+            ),
+        )
+
+        assert any(blocked_after_vmap)
+        assert result.states.step_count.shape == (2,)
+        chex.assert_shape(result.metrics, (2, 8, 4 if tracking else 3))
 
     def test_batched_returns_correct_shapes(self):
         """Batched loop should return metrics with shape (num_seeds, num_steps, 3)."""

@@ -1785,6 +1785,7 @@ def run_mlp_learning_loop[StreamStateT](
         (final_learner, _), metrics = jax.lax.scan(
             step_fn, (learner_state, stream_state), jnp.arange(num_steps)
         )
+        jax.block_until_ready((final_learner, metrics))  # type: ignore[no-untyped-call]
         elapsed = time.time() - t0
         final_learner = final_learner.replace(uptime_s=final_learner.uptime_s + elapsed)  # type: ignore[attr-defined]
 
@@ -1841,6 +1842,7 @@ def run_mlp_learning_loop[StreamStateT](
         (final_learner, _, final_n_means, final_n_vars, final_n_rec),
         metrics,
     ) = jax.lax.scan(step_fn_with_tracking, initial_carry, jnp.arange(num_steps))
+    jax.block_until_ready((final_learner, metrics))  # type: ignore[no-untyped-call]
     elapsed = time.time() - t0
     final_learner = final_learner.replace(uptime_s=final_learner.uptime_s + elapsed)  # type: ignore[attr-defined]
 
@@ -1921,6 +1923,9 @@ def run_mlp_learning_loop_batched[StreamStateT](
 
     t0 = time.time()
     batched_states, batched_metrics, batched_norm_history = jax.vmap(single_seed_run)(keys)
+    jax.block_until_ready(  # type: ignore[no-untyped-call]
+        (batched_states, batched_metrics, batched_norm_history)
+    )
     elapsed = time.time() - t0
     batched_states = batched_states.replace(  # type: ignore[attr-defined]
         uptime_s=batched_states.uptime_s + elapsed
