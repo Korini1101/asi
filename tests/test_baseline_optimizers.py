@@ -111,6 +111,25 @@ class TestAdaGain:
         chex.assert_trees_all_close(result.new_state.gradient_trace, error * observation)
         assert float(result.new_state.bias_gradient_trace) == pytest.approx(1.0)
 
+    def test_disabled_adaptation_preserves_representable_extreme_step(self) -> None:
+        """A disabled meta/trace path must not reject a finite scaled update."""
+        optimizer = AdaGain(
+            initial_step_size=1.0e-8,
+            meta_step_size=0.0,
+            forgetting_rate=0.0,
+        )
+        state = optimizer.init(feature_dim=1)
+        error = jnp.asarray(2.0, dtype=jnp.float32)
+        observation = jnp.asarray([2.0e38], dtype=jnp.float32)
+        expected = state.step_sizes * error * observation
+
+        assert bool(jnp.all(jnp.isfinite(expected)))
+        result = optimizer.update(state, error, observation)
+
+        assert bool(result.update_applied)
+        chex.assert_trees_all_equal(result.weight_delta, expected)
+        chex.assert_trees_all_equal(result.new_state.gradient_trace, state.gradient_trace)
+
 
 # =============================================================================
 # Adam
