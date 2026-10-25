@@ -409,7 +409,7 @@ def _validate_config(config: ExperientialMemoryConfig) -> None:
         + 2 * config.top_k * (payload_values + 4)
         + 9 * config.top_k
         + payload_values
-        + 4
+        + 5
     )
     if persistent_bytes + 4 * query_temporary_scalars > _INT32_MAX:
         raise ValueError(
@@ -1056,6 +1056,16 @@ class ExperientialMemory:
         )
         weighted_reliability = jnp.sum(neighbor_weights * effective_reliabilities[indices])
 
+        aggregate_values_finite = (
+            jnp.all(jnp.isfinite(weighted_observation))
+            & jnp.all(jnp.isfinite(weighted_action))
+            & jnp.all(jnp.isfinite(weighted_outcome))
+            & jnp.isfinite(weighted_reward)
+            & jnp.isfinite(weighted_uncertainty)
+            & jnp.isfinite(weighted_safety_cost)
+            & jnp.isfinite(weighted_reliability)
+        )
+
         has_neighbors = jnp.sum(neighbor_mask.astype(jnp.int32)) >= cfg.min_neighbors
         version_compatible = jnp.any(same_version)
         freshness_ok = jnp.any(fresh)
@@ -1072,9 +1082,9 @@ class ExperientialMemory:
         )
         safety_ok = jnp.any(safety_eligible)
         aggregate_ok = (
-            (weighted_uncertainty <= cfg.max_uncertainty)
+            aggregate_values_finite
+            & (weighted_uncertainty <= cfg.max_uncertainty)
             & (weighted_safety_cost <= cfg.max_safety_cost)
-            & jnp.isfinite(weighted_reliability)
         )
         accepted = (
             state_valid
