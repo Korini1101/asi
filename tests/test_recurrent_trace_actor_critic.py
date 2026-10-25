@@ -936,6 +936,19 @@ def test_update_requires_start_and_valid_transition_scalars() -> None:
         )
 
 
+def test_start_rejects_finite_observation_that_overflows_running_state() -> None:
+    """Do not dispatch an action after the retained Welford state overflows."""
+    agent = RecurrentTraceActorCriticAgent(_small_config())
+    state = agent.init(feature_dim=2, key=jr.key(0))
+    observation = jnp.full((2,), jnp.finfo(jnp.float32).max)
+
+    with pytest.raises(
+        jax.errors.JaxRuntimeError,
+        match="observation normalization produced non-finite state",
+    ):
+        agent.start(state, observation)
+
+
 def test_jitted_public_update_enforces_dynamic_lifecycle_and_discount_checks() -> None:
     """The complete public boundary must retain its checks under an outer JIT."""
     agent = RecurrentTraceActorCriticAgent(_small_config())
