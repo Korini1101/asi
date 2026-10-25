@@ -95,6 +95,27 @@ def _require_interaction_feature_loop_steps(name: str, value: object) -> int:
     return value
 
 
+def _representable_l2_norm(values: Array) -> Array:
+    """Recover a representable float32 norm when only its reduction overflows."""
+
+    direct = jnp.linalg.norm(values)
+    maximum = jnp.max(jnp.abs(values))
+    mantissa, exponent = jnp.frexp(maximum)
+    safe_mantissa = jnp.where(maximum > 0.0, mantissa, 1.0)
+    scaled = jnp.ldexp(values, -exponent) / safe_mantissa
+    scaled_norm = jnp.sqrt(jnp.sum(jnp.square(scaled)))
+    safe_scaled_norm = jnp.where(scaled_norm > 0.0, scaled_norm, 1.0)
+    float32_max = jnp.asarray(np.finfo(np.float32).max, dtype=jnp.float32)
+    true_norm_overflows = maximum > float32_max / safe_scaled_norm
+    stable = jnp.where(
+        maximum == 0.0,
+        0.0,
+        jnp.where(true_norm_overflows, jnp.inf, maximum * scaled_norm),
+    )
+    reduction_only_overflow = ~jnp.isfinite(direct) & jnp.all(jnp.isfinite(values))
+    return jnp.where(reduction_only_overflow, stable, direct)
+
+
 def _require_resource(name: str, *, scalars: int, nbytes: int) -> None:
     """Reject derived device resources before a JAX allocation is attempted."""
     if scalars > _INT32_MAX:
@@ -2558,7 +2579,7 @@ class FixedBudgetInteractionLearner:
             total_step = jnp.sum(jnp.abs(output_delta)) + jnp.sum(jnp.abs(output_bias_delta))
             if not self._independent_relevance_probe:
                 total_step = total_step + jnp.sum(jnp.abs(candidate_output_delta))
-            err_norm = jnp.linalg.norm(errors)
+            err_norm = _representable_l2_norm(errors)
             bound_magnitude = self._obgd_kappa * jnp.maximum(err_norm, 1.0) * total_step
             bounding_scale = 1.0 / jnp.maximum(bound_magnitude, 1.0)
             output_delta = bounding_scale * output_delta
@@ -3532,7 +3553,14 @@ class FixedBudgetInteractionLearner:
             uptime_s=state.uptime_s,
         )
 
-        loss = jnp.sum(errors**2) / active_count
+        squared_errors = errors**2
+        loss = jnp.sum(squared_errors) / active_count
+        reduction_only_overflow = jnp.isinf(loss) & jnp.all(jnp.isfinite(squared_errors))
+        loss = jnp.where(
+            reduction_only_overflow,
+            jnp.sum(squared_errors / active_count),
+            loss,
+        )
         mean_abs_error = jnp.sum(jnp.abs(errors)) / active_count
         max_candidate_utility = (
             jnp.max(new_candidate_utilities)
