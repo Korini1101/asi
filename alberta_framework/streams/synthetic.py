@@ -940,7 +940,10 @@ class ScaledStreamWrapper:
             ValueError: If feature_scales length doesn't match inner stream's feature_dim
         """
         self._inner_stream: ScanStream[Any] = inner_stream
-        self._feature_scales = jnp.asarray(feature_scales, dtype=jnp.float32)
+        raw_feature_scales = jnp.asarray(feature_scales)
+        if jnp.issubdtype(raw_feature_scales.dtype, jnp.complexfloating):
+            raise ValueError("feature_scales must contain only real values")
+        self._feature_scales = jnp.asarray(raw_feature_scales, dtype=jnp.float32)
 
         if (
             self._feature_scales.ndim != 1
