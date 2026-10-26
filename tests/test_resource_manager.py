@@ -528,6 +528,17 @@ class TestGeneratorMetaResourceManager:
         assert float(decision.candidate_min_age_multiplier) == pytest.approx(1.5)
         assert float(decision.imprint_scale) == pytest.approx(0.0)
 
+    @pytest.mark.parametrize(
+        "key",
+        [jr.PRNGKey(1), jr.key(1, impl="rbg")],
+        ids=["legacy-words", "rbg"],
+    )
+    def test_select_requires_a_typed_threefry_key(self, key: jax.Array) -> None:
+        manager = self._manager()
+
+        with pytest.raises(TypeError, match="typed scalar threefry2x32 key"):
+            manager.select(manager.init(), key)
+
     def test_config_roundtrip(self) -> None:
         manager = GeneratorMetaResourceManager(
             policy_names=("a", "b", "c"),
