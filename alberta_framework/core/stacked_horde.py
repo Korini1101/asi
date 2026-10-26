@@ -566,6 +566,7 @@ class StackedLinearHorde:
             jnp.all(jnp.isfinite(features))
             & jnp.all(jnp.isfinite(next_features))
             & source_weights_finite
+            & (state.step_count >= 0)
         )
         candidate_finite = jnp.all(jnp.isfinite(proposed_weights), axis=1) & jnp.all(
             jnp.isfinite(proposed_traces), axis=1
