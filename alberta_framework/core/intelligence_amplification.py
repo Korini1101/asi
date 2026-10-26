@@ -184,6 +184,24 @@ def _positive_float32_scalar(name: str, value: object) -> float:
     return narrowed
 
 
+def _exact_config_fields(
+    payload: object,
+    *,
+    expected_type: str,
+    expected_fields: frozenset[str],
+) -> dict[str, Any]:
+    """Return fields from one exact, type-tagged serialized config record."""
+
+    if type(payload) is not dict:
+        raise ValueError(f"{expected_type} config must be an actual dict")
+    data = cast(dict[str, Any], payload).copy()
+    if data.pop("type", None) != expected_type:
+        raise ValueError(f"{expected_type} config type is invalid")
+    if set(data) != expected_fields:
+        raise ValueError(f"{expected_type} config fields do not match its schema")
+    return data
+
+
 # ---------------------------------------------------------------------------
 # Exo-cerebellum
 # ---------------------------------------------------------------------------
@@ -226,8 +244,11 @@ class ExoCerebellumConfig:
 
     @classmethod
     def from_config(cls, payload: dict[str, Any]) -> ExoCerebellumConfig:
-        data = dict(payload)
-        data.pop("type", None)
+        data = _exact_config_fields(
+            payload,
+            expected_type="ExoCerebellumConfig",
+            expected_fields=frozenset(field.name for field in dataclasses.fields(cls)),
+        )
         return cls(**data)
 
 
@@ -690,8 +711,11 @@ class IAConfig:
 
     @classmethod
     def from_config(cls, payload: dict[str, Any]) -> IAConfig:
-        data = dict(payload)
-        data.pop("type", None)
+        data = _exact_config_fields(
+            payload,
+            expected_type="IAConfig",
+            expected_fields=frozenset(field.name for field in dataclasses.fields(cls)),
+        )
         cerebellum = ExoCerebellumConfig.from_config(cast(dict[str, Any], data["cerebellum"]))
         cortex = OaKConfig.from_config(cast(dict[str, Any], data["cortex"]))
         return cls(cerebellum=cerebellum, cortex=cortex)
@@ -802,8 +826,11 @@ class RecommendationProtocolConfig:
     @classmethod
     def from_config(cls, payload: dict[str, Any]) -> RecommendationProtocolConfig:
         """Reconstruct from :meth:`to_config` output."""
-        data = dict(payload)
-        data.pop("type", None)
+        data = _exact_config_fields(
+            payload,
+            expected_type="RecommendationProtocolConfig",
+            expected_fields=frozenset(field.name for field in dataclasses.fields(cls)),
+        )
         return cls(**data)
 
 
