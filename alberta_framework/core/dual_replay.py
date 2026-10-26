@@ -2239,6 +2239,15 @@ class DualReplayMemory:
                 array: npt.NDArray[np.float32] = np.asarray(value, dtype=np.float32)
             if not np.all(np.isfinite(array)):
                 raise ValueError(f"{name} must contain finite float32 values")
+            for source, narrowed in zip(untyped, array.flat, strict=True):
+                restored = float(narrowed)
+                if (
+                    type(source) is int
+                    and restored != source
+                    or type(source) is float
+                    and restored.hex() != source.hex()
+                ):
+                    raise ValueError(f"{name} must contain exact float32 values")
             return jnp.asarray(array, dtype=jnp.float32)
         if np.issubdtype(expected, np.bool_):
             if any(type(item) is not bool for item in untyped):
