@@ -2377,6 +2377,12 @@ _OPTIMIZER_REGISTRY: dict[str, type] = {
     "ObGD": ObGD,
 }
 
+_OPTIONAL_OPTIMIZER_CONFIG_FIELDS: dict[str, frozenset[str]] = {
+    # The default mode predates this serialized field, so canonical current
+    # configs include it only when the non-default mode is selected.
+    "IDBD": frozenset({"h_decay_mode"}),
+}
+
 _BOUNDER_REGISTRY: dict[str, type] = {
     "ObGDBounding": ObGDBounding,
     "AdaptiveObGDBounding": AdaptiveObGDBounding,
@@ -2436,15 +2442,18 @@ def optimizer_from_config(config: dict[str, Any]) -> Optimizer[Any]:
     cls = _OPTIMIZER_REGISTRY.get(host_type)
     if cls is None:
         raise ValueError(f"Unknown optimizer type: '{host_type}'")
-    expected_fields = set(cls().to_config())
+    required_fields = set(cls().to_config())
+    allowed_fields = required_fields | _OPTIONAL_OPTIMIZER_CONFIG_FIELDS.get(
+        host_type, frozenset()
+    )
     observed_fields = {"type", *config}
-    if host_type == "Adam" and observed_fields == expected_fields - {"weight_decay"}:
+    if host_type == "Adam" and observed_fields == required_fields - {"weight_decay"}:
         # Adam configs written before weight decay was added have one explicit
         # compatibility route. No other constructor defaults are a serialized
         # config migration policy.
         config["weight_decay"] = 0.0
         observed_fields.add("weight_decay")
-    if observed_fields != expected_fields:
+    if not required_fields <= observed_fields <= allowed_fields:
         raise ValueError("optimizer config fields do not match the schema")
     result: Optimizer[Any] = cls(**config)
     return result
