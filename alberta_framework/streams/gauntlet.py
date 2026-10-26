@@ -1447,7 +1447,15 @@ def best_fixed_alpha_errors(
         # over the finite steps, so a divergent-late candidate cannot "win"
         # with an undefined mean.
         n_bad = float(jnp.sum(~finite))
-        finite_mean = float(jnp.sum(jnp.where(finite, sq, 0.0)) / jnp.maximum(jnp.sum(finite), 1))
+        finite_values = jnp.where(finite, sq, 0.0)
+        finite_count = jnp.maximum(jnp.sum(finite), 1)
+        direct_mean = jnp.sum(finite_values) / finite_count
+        # Fall back to exact power-of-two scaling only when the ordinary sum
+        # overflows; large reciprocals can flush to zero on XLA:CPU.
+        _, exponent = jnp.frexp(jnp.max(finite_values, initial=0.0))
+        scaled_values = jnp.ldexp(finite_values, -exponent)
+        scaled_mean = jnp.ldexp(jnp.sum(scaled_values) / finite_count, exponent)
+        finite_mean = float(jnp.where(jnp.isfinite(direct_mean), direct_mean, scaled_mean))
         score = (n_bad, finite_mean)
         if best_sq is None or score < best_score:
             best_score = score
