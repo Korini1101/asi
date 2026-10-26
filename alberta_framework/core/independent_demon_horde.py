@@ -82,6 +82,21 @@ _ACTUAL_INT_TYPES = frozenset(
 _ACTUAL_REAL_TYPES = _ACTUAL_INT_TYPES | frozenset(
     {float, *(np.dtype(code).type for code in "efdg")}
 )
+_SERIALIZED_FIELDS = frozenset(
+    {
+        "type",
+        "horde_spec",
+        "hidden_sizes",
+        "optimizer",
+        "bounder",
+        "normalizer",
+        "head_optimizer",
+        "sparsity",
+        "leaky_relu_slope",
+        "use_layer_norm",
+        "trace_mode",
+    }
+)
 
 
 def _require_int32(name: str, value: object, *, minimum: int, maximum: int = _INT32_MAX) -> int:
@@ -481,7 +496,11 @@ class IndependentDemonHorde:
         )
 
         config = _read_mapping("config", config)
-        config.pop("type", None)
+        if set(config) != _SERIALIZED_FIELDS:
+            raise ValueError("config fields do not match the IndependentDemonHorde schema")
+        marker = config.pop("type")
+        if type(marker) is not str or marker != "IndependentDemonHorde":
+            raise ValueError("config type is invalid")
 
         horde_spec = HordeSpec.from_config(config.pop("horde_spec"))
         optimizer = optimizer_from_config(config.pop("optimizer"))

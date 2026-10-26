@@ -694,6 +694,30 @@ def test_independent_horde_config_accepts_mapping_and_exact_list_or_tuple() -> N
         IndependentDemonHorde.from_config(config)
 
 
+@pytest.mark.parametrize("field", ("type", "sparsity", "trace_mode", "bounder"))
+def test_independent_horde_from_config_requires_complete_outer_schema(field: str) -> None:
+    spec = create_horde_spec(_make_all_gamma0_spec(1))
+    payload = IndependentDemonHorde(
+        horde_spec=spec,
+        hidden_sizes=(4,),
+        step_size=0.25,
+        bounder=ObGDBounding(kappa=3.0),
+    ).to_config()
+    payload.pop(field)
+
+    with pytest.raises(ValueError, match="config fields do not match"):
+        IndependentDemonHorde.from_config(payload)
+
+
+def test_independent_horde_from_config_requires_exact_type_marker() -> None:
+    spec = create_horde_spec(_make_all_gamma0_spec(1))
+    payload = IndependentDemonHorde(horde_spec=spec, hidden_sizes=(4,)).to_config()
+    payload["type"] = "HordeLearner"
+
+    with pytest.raises(ValueError, match="config type is invalid"):
+        IndependentDemonHorde.from_config(payload)
+
+
 def test_independent_horde_preflights_direct_state_before_allocation() -> None:
     _require_direct_state_resources(1, (), 268_435_452)
     with pytest.raises(ValueError, match="direct_state_bytes"):
