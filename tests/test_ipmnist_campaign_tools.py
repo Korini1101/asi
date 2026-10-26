@@ -356,6 +356,38 @@ def test_ceiling_npz_metadata_rejects_duplicate_json_object_keys(tmp_path: Path)
         build_ceiling_summary(ceiling, tmp_path / "confirm")
 
 
+@pytest.mark.parametrize("accuracy", [True, "1.0"], ids=("bool", "numeric-string"))
+def test_ceiling_analyzer_rejects_non_numeric_accuracy_aliases(
+    tmp_path: Path, accuracy: object
+) -> None:
+    ceiling = tmp_path / "ceiling"
+    ceiling.mkdir()
+    payload = {
+        "schema": "asi.ipmnist_ceiling.run.v2",
+        "evidence_class": "development_screening_diagnostic",
+        "development_only": True,
+        "scientific_promotion_allowed": False,
+        "tag": "stationary_sigma0_ndecay099",
+        "spec_name": "sigma0_ndecay099",
+        "seed": 0,
+        "perm_mode": "identity",
+        "n_tasks": 1,
+        "task_length": 5000,
+        "per_task_accuracy": [accuracy],
+        "mean_accuracy": 1.0,
+        "wall_clock_seconds": 1.0,
+        "provenance": {"schema": "asi.ipmnist.ceiling_run_provenance.v1"},
+    }
+    np.savez_compressed(
+        ceiling / "stationary_sigma0_ndecay099_seed0.npz",
+        metadata=np.asarray(json.dumps(payload)),
+        per_step=np.ones((1, 5000), dtype=np.uint8),
+    )
+
+    with pytest.raises(ValueError, match="per_task_accuracy must be a finite numeric vector"):
+        build_ceiling_summary(ceiling, tmp_path / "confirm")
+
+
 def test_frontier_requires_and_uses_exact_paired_seed_sets(tmp_path: Path) -> None:
     screen = tmp_path / "screen"
     confirm = tmp_path / "confirm"
