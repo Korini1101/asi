@@ -33,6 +33,7 @@ References:
 from __future__ import annotations
 
 from functools import partial
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -339,23 +340,22 @@ def _sliding_sum(values: Array, window_size: int) -> Array:
     return summed
 
 
-def _scaled_running_rmse_terms(
-    errors: Array, window_size: int
-) -> tuple[Array, Array, Array]:
-    """Return one power-of-two scale and stable sliding RMS terms."""
-    scale = jnp.max(jnp.abs(errors), axis=0)
-    _, exponent = jnp.frexp(scale)
-    scaled_errors = jnp.ldexp(errors, -exponent)
-    scaled_window = _sliding_sum(scaled_errors**2, window_size)
-    scaled_running = jnp.sqrt(scaled_window / window_size)
-    return exponent, scaled_errors, scaled_running
+def _window_slice(values: Array, start: Array, window_size: int) -> Array:
+    """Return one statically sized time window from a traced start index."""
+    return jax.lax.dynamic_slice_in_dim(values, start, window_size, axis=0)
 
 
 @partial(jax.custom_jvp, nondiff_argnums=(1,))
 def _finite_running_rmse(errors: Array, window_size: int) -> Array:
-    """Compute a finite sliding RMSE with a scale-free derivative."""
-    exponent, _, scaled_running = _scaled_running_rmse_terms(errors, window_size)
-    return jnp.ldexp(scaled_running, exponent)
+    """Compute a finite sliding RMSE with an independent scale per window."""
+    starts = jnp.arange(errors.shape[0] - window_size + 1, dtype=jnp.int32)
+
+    def per_window(start: Array) -> Array:
+        window = _window_slice(errors, start, window_size)
+        exponent, _, scaled_rmse = _scaled_rmse_terms(window)
+        return jnp.ldexp(scaled_rmse, exponent)
+
+    return cast(Array, jax.lax.map(per_window, starts))
 
 
 @_finite_running_rmse.defjvp
@@ -365,18 +365,23 @@ def _finite_running_rmse_jvp(
     tangents: tuple[Array],
 ) -> tuple[Array, Array]:
     (errors,), (errors_dot,) = primals, tangents
-    exponent, scaled_errors, scaled_running = _scaled_running_rmse_terms(
-        errors, window_size
-    )
-    running = jnp.ldexp(scaled_running, exponent)
-    safe_scaled_running = jnp.where(
-        scaled_running > 0.0,
-        scaled_running,
-        jnp.ones_like(scaled_running),
-    )
-    numerator = _sliding_sum(scaled_errors * errors_dot, window_size) / window_size
-    running_dot = numerator / safe_scaled_running
-    return running, running_dot
+    starts = jnp.arange(errors.shape[0] - window_size + 1, dtype=jnp.int32)
+
+    def per_window(start: Array) -> tuple[Array, Array]:
+        error_window = _window_slice(errors, start, window_size)
+        tangent_window = _window_slice(errors_dot, start, window_size)
+        exponent, scaled_errors, scaled_rmse = _scaled_rmse_terms(error_window)
+        running = jnp.ldexp(scaled_rmse, exponent)
+        safe_scaled_rmse = jnp.where(
+            scaled_rmse > 0.0,
+            scaled_rmse,
+            jnp.ones_like(scaled_rmse),
+        )
+        weights = scaled_errors / safe_scaled_rmse / window_size
+        running_dot = jnp.sum(weights * tangent_window, axis=0)
+        return running, running_dot
+
+    return cast(tuple[Array, Array], jax.lax.map(per_window, starts))
 
 
 def per_horizon_rmse(
