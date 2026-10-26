@@ -260,6 +260,36 @@ def _rehash_bundle(path: Path) -> None:
     (path / "COMMITTED").write_text(f"{bundle_id}\n", encoding="ascii")
 
 
+def test_snapshot_rejects_same_size_source_mutation_during_copy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    source = source_root / "child.bin"
+    source.write_bytes(b"a" * (2 * 1024 * 1024))
+    real_read = os.read
+    mutated = False
+
+    def mutate_between_chunks(descriptor: int, count: int) -> bytes:
+        nonlocal mutated
+        chunk = real_read(descriptor, count)
+        if chunk and not mutated:
+            mutated = True
+            source.write_bytes(b"b" * (2 * 1024 * 1024))
+        return chunk
+
+    monkeypatch.setattr(checkpoint_module.os, "read", mutate_between_chunks)
+    snapshot: Path | None = None
+    try:
+        with pytest.raises(ValueError, match="changed while copied"):
+            snapshot = checkpoint_module._snapshot_checkpoint(source_root)
+    finally:
+        if snapshot is not None:
+            shutil.rmtree(snapshot)
+    assert mutated
+
+
 def test_restore_rejects_incomplete_tampered_unknown_and_symlink_bundles(
     saved_case: tuple[ReferenceLifeRunner, ReferenceLifeState, ReferenceLifeState, Path],
     tmp_path: Path,

@@ -1878,7 +1878,32 @@ def _snapshot_checkpoint(source: Path) -> Path:
                                 while view:
                                     written = os.write(child_destination, view)
                                     view = view[written:]
-                            if copied != metadata.st_size:
+                            after = os.fstat(child_source)
+                            current = os.stat(
+                                name,
+                                dir_fd=source_fd,
+                                follow_symlinks=False,
+                            )
+                            stable_fields = (
+                                "st_dev",
+                                "st_ino",
+                                "st_mode",
+                                "st_size",
+                                "st_mtime_ns",
+                                "st_ctime_ns",
+                                "st_nlink",
+                            )
+                            if (
+                                copied != metadata.st_size
+                                or any(
+                                    getattr(metadata, field) != getattr(after, field)
+                                    for field in stable_fields
+                                )
+                                or any(
+                                    getattr(metadata, field) != getattr(current, field)
+                                    for field in stable_fields
+                                )
+                            ):
                                 raise ValueError(
                                     f"checkpoint child changed while copied: {child_relative}"
                                 )
