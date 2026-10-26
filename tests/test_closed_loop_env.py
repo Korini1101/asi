@@ -911,6 +911,26 @@ def test_closed_loop_step_counts_saturate_eager_and_outer_jit() -> None:
 
 
 @pytest.mark.parametrize(
+    "invalid_key",
+    (
+        jr.PRNGKey(0),
+        jr.key(0, impl="rbg"),
+    ),
+)
+def test_closed_loop_rng_consumers_require_typed_threefry_keys(
+    invalid_key: jax.Array,
+) -> None:
+    switching = SwitchingTwoStateMDP()
+    with pytest.raises(TypeError, match="typed scalar threefry2x32"):
+        switching.init(invalid_key)
+
+    river = RiverSwimMDP()
+    river_state = river.init(jr.key(0, impl="threefry2x32"))
+    with pytest.raises(TypeError, match="typed scalar threefry2x32"):
+        river.step(river_state, jnp.asarray(RIGHT_ACTION), invalid_key)
+
+
+@pytest.mark.parametrize(
     "state",
     (
         RiverSwimState(
