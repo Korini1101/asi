@@ -88,6 +88,8 @@ NORMALIZER_LIFETIME_COUNTER_DELTA_NBYTES = 8
 _INT32_MAX = 2**31 - 1
 _UINT32_MAX = 2**32 - 1
 _FLOAT32_CONSECUTIVE_INTEGER_LIMIT = 2**24
+_FLOAT32_TINY = float(np.finfo(np.float32).tiny)
+_FLOAT32_MAX = float(np.finfo(np.float32).max)
 
 _ACTUAL_INT_TYPES: tuple[type, ...] = (
     int,
@@ -303,8 +305,10 @@ class Normalizer[
             epsilon: Small constant added to std for numerical stability
         """
         epsilon = _validated_finite_real("epsilon", epsilon)
-        if epsilon <= 0.0:
-            raise ValueError("epsilon must be finite and positive")
+        if not _FLOAT32_TINY <= epsilon <= _FLOAT32_MAX:
+            raise ValueError(
+                "epsilon must remain a positive normal finite float32 value"
+            )
         self._epsilon = epsilon
 
     @abstractmethod
