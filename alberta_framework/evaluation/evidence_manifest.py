@@ -160,7 +160,6 @@ _FTL_CLAIM_ID = "ftl_world_model_decision_fidelity"
 _FTL_ARTIFACT_PATH = Path("outputs/ftl_decision/evidence.v1.json")
 _FTL_SOURCE_PATHS = (
     Path("alberta_framework/core/ftl_world_model.py"),
-    _MEASUREMENT_VALIDATION_SOURCE_PATH,
     Path("alberta_framework/evaluation/ftl_decision_fidelity.py"),
     Path("alberta_framework/evaluation/ftl_decision_artifact.py"),
     Path("alberta_framework/evaluation/ftl_decision_cli.py"),
@@ -253,7 +252,6 @@ _FTL_ATTESTATION_LIMITATIONS = (
 _IA_CLAIM_ID = "continual_intelligence_amplification"
 _IA_ARTIFACT_PATH = Path("outputs/continual_ia/evidence.json")
 _IA_SOURCE_PATHS = (
-    _MEASUREMENT_VALIDATION_SOURCE_PATH,
     Path("alberta_framework/evaluation/continual_ia.py"),
     Path("alberta_framework/evaluation/continual_ia_artifact.py"),
     Path("alberta_framework/evaluation/continual_ia_cli.py"),
