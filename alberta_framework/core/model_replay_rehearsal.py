@@ -1262,6 +1262,16 @@ def load_model_replay_rehearsal_checkpoint(
     resource_budget = metadata.get("resource_budget")
     if type(resource_budget) is not dict or resource_budget != expected_budget:
         raise ValueError("model replay rehearsal resource budget does not match config")
+    expected_metadata_fields = {
+        "schema",
+        "mechanism_status",
+        "accepted_scientific_evidence",
+        "composer_config",
+        "config_sha256",
+        "resource_budget",
+    }
+    if set(metadata) != expected_metadata_fields:
+        raise ValueError("model replay rehearsal checkpoint metadata fields do not match v1")
     restored, restored_metadata = load_checkpoint(template, path)
     if restored_metadata != metadata:
         raise ValueError("model replay rehearsal checkpoint metadata changed between reads")
