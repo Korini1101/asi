@@ -156,6 +156,23 @@ class TestBounderConfig:
         with pytest.raises(ValueError, match="Unknown bounder"):
             bounder_from_config({"type": "UnknownBound"})
 
+    @pytest.mark.parametrize(
+        ("bounder", "missing_field"),
+        [
+            (ObGDBounding(kappa=7.0), "kappa"),
+            (AdaptiveObGDBounding(kappa=7.0, eps=1e-6), "eps"),
+            (AGCBounding(clip_factor=0.2, eps=1e-4), "clip_factor"),
+        ],
+    )
+    def test_missing_bounder_field_cannot_restore_a_default(
+        self, bounder, missing_field
+    ):
+        config = bounder.to_config()
+        del config[missing_field]
+
+        with pytest.raises(ValueError, match="bounder config fields"):
+            bounder_from_config(config)
+
 
 # =============================================================================
 # Normalizer round-trip

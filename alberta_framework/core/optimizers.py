@@ -2451,10 +2451,15 @@ def bounder_from_config(config: dict[str, Any]) -> Bounder:
     if type(config) is not dict:
         raise ValueError("bounder config must be an exact dict")
     config = dict(config)
+    if any(type(key) is not str for key in config) or "type" not in config:
+        raise ValueError("bounder config fields do not match the schema")
     type_name = config.pop("type")
     host_type = _require_exact_str("type_name", type_name)
     cls = _BOUNDER_REGISTRY.get(host_type)
     if cls is None:
         raise ValueError(f"Unknown bounder type: '{host_type}'")
+    expected_fields = set(cls().to_config())
+    if {"type", *config} != expected_fields:
+        raise ValueError("bounder config fields do not match the schema")
     result: Bounder = cls(**config)
     return result
