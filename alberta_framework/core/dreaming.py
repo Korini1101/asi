@@ -603,6 +603,44 @@ def score_dream_candidates(
         + weighted_term(cfg.confidence_weight, confidence_arr)
         - weighted_term(cfg.model_error_weight, error_arr)
     )
+
+    def recover_overflowed_scores(_: None) -> Array:
+        # Preserve ordinary arithmetic exactly. Only recover when finite terms
+        # overflowed before cancelling to a representable weighted sum.
+        weights = jnp.asarray(
+            [
+                cfg.surprise_weight,
+                cfg.utility_weight,
+                cfg.confidence_weight,
+                -cfg.model_error_weight,
+            ],
+            dtype=jnp.float32,
+        )
+        values = jnp.stack(
+            (surprise_arr, utility_arr, confidence_arr, error_arr), axis=0
+        )
+        value_peak = jnp.max(jnp.abs(values), axis=0)
+        weight_peak = jnp.max(jnp.abs(weights))
+        _value_mantissa, value_exponent = jnp.frexp(
+            jnp.where(value_peak > 0.0, value_peak, 1.0)
+        )
+        _weight_mantissa, weight_exponent = jnp.frexp(
+            jnp.where(weight_peak > 0.0, weight_peak, 1.0)
+        )
+        scaled_values = jnp.ldexp(values, -value_exponent[None, :])
+        scaled_weights = jnp.ldexp(weights, -weight_exponent)
+        recovered_scores = jnp.ldexp(
+            jnp.sum(scaled_weights[:, None] * scaled_values, axis=0),
+            value_exponent + weight_exponent,
+        )
+        return jnp.where(jnp.isfinite(raw_scores), raw_scores, recovered_scores)
+
+    raw_scores = jax.lax.cond(
+        jnp.all(jnp.isfinite(raw_scores)),
+        lambda _: raw_scores,
+        recover_overflowed_scores,
+        operand=None,
+    )
     accepted = accepted & jnp.isfinite(raw_scores)
     scores = jnp.where(accepted, raw_scores, -jnp.inf)
     selected_indices = jnp.argsort(-scores)[: cfg.max_items].astype(jnp.int32)

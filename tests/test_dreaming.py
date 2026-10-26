@@ -27,6 +27,7 @@ from alberta_framework.core.dreaming import (
     imagined_transition_to_gvf_item,
     imagined_transition_to_supervised_item,
     init_dream_rollout_state,
+    score_dream_candidates,
     slice_imagined_transition,
 )
 
@@ -78,6 +79,24 @@ def test_dream_configs_validate_and_canonicalize_float32_sink_values() -> None:
         DreamSelectionConfig(surprise_weight=1e100)
     with pytest.raises(ValueError, match="min_confidence"):
         DreamSelectionConfig(min_confidence=Fraction(-1, 10**50))
+
+
+def test_dream_score_preserves_representable_cancellation_after_product_overflow() -> None:
+    result = score_dream_candidates(
+        jnp.asarray([2.0e38, 0.0, 2.0e38], dtype=jnp.float32),
+        jnp.asarray([-2.0e38, -1.0, 2.0e38], dtype=jnp.float32),
+        config=DreamSelectionConfig(
+            max_items=1,
+            surprise_weight=2.0,
+            utility_weight=2.0,
+            min_utility=-3.0e38,
+        ),
+    )
+
+    assert result.accepted.tolist() == [True, True, False]
+    np.testing.assert_array_equal(result.scores, jnp.asarray([0.0, -2.0, -jnp.inf]))
+    assert result.selected_indices.tolist() == [0]
+    assert result.selected_mask.tolist() == [True, False, False]
 
 
 @pytest.mark.parametrize("value", [2**31, True, 1.5])
