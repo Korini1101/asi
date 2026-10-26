@@ -86,6 +86,7 @@ def _decode_bounded_utf8_json(path: Path) -> str:
         if not stat.S_ISREG(initial_metadata.st_mode):
             raise ValueError("strict JSON input must be a regular file, not a symlink")
         flags = os.O_RDONLY
+        flags |= getattr(os, "O_BINARY", 0)
         flags |= getattr(os, "O_CLOEXEC", 0)
         flags |= getattr(os, "O_NOFOLLOW", 0)
         flags |= getattr(os, "O_NONBLOCK", 0)
