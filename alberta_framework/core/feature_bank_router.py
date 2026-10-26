@@ -629,6 +629,7 @@ class FeatureBankRouter:
             (state.route_count < 0)
             | (state.generation_count < 0)
             | (state.generation_count > state.route_count)
+            | (state.route_count >= _INT32_MAX)
         )
         valid = old_validation.valid & new_validation.valid & ~counter_invalid
 

@@ -346,6 +346,33 @@ def test_generation_count_ahead_of_route_count_fails_closed() -> None:
 
 
 @pytest.mark.unit
+def test_route_rejects_when_lifetime_counter_cannot_advance() -> None:
+    router = _router()
+    maximum = int(np.iinfo(np.int32).max)
+    state = dataclasses.replace(
+        router.init(_OLD),
+        route_count=jnp.asarray(maximum, dtype=jnp.int32),
+        generation_count=jnp.asarray(maximum - 1, dtype=jnp.int32),
+    )
+    consumers = _consumers()
+
+    result = jax.jit(
+        lambda router_state, consumer_tree: router.route(
+            router_state,
+            consumer_tree,
+            _NEW,
+            feature_axes=_feature_axes(),
+        )
+    )(state, consumers)
+
+    assert not bool(result.diagnostics.valid)
+    assert not bool(result.diagnostics.route_applied)
+    assert bool(result.diagnostics.counter_invalid)
+    _assert_state_bit_exact(result.state, state)
+    _assert_tree_bit_exact(result.consumers, consumers)
+
+
+@pytest.mark.unit
 def test_no_carry_ablation_keeps_route_identity_and_zeros_only_tail() -> None:
     router = _router()
     state = router.init(_OLD)
