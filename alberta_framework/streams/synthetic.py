@@ -76,6 +76,11 @@ def _sutton_experiment1_persistent_bytes(feature_dim: int) -> int:
     return 4 * (feature_dim + 3)
 
 
+def _cyclic_persistent_bytes(feature_dim: int, num_configurations: int) -> int:
+    """Bytes in the configuration matrix, key words, and lifetime counter."""
+    return 4 * (feature_dim * num_configurations + 3)
+
+
 def _scale_stream_persistent_bytes(feature_dim: int) -> int:
     """Named persist already counted inside ``_require_float32_resource``."""
     return 4 * (2 * feature_dim + 3)
@@ -713,6 +718,14 @@ class CyclicStream:
         self._cycle_length = _require_positive_int("cycle_length", cycle_length)
         self._num_configurations = _require_positive_int(
             "num_configurations", num_configurations
+        )
+        _preflight_synthetic_step_working_set(
+            "CyclicStream",
+            _cyclic_persistent_bytes(
+                self._feature_dim,
+                self._num_configurations,
+            ),
+            self._feature_dim,
         )
         self._noise_std = _require_finite_nonnegative_float32("noise_std", noise_std)
         self._feature_std = _require_finite_nonnegative_float32("feature_std", feature_std)
