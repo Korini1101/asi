@@ -211,6 +211,27 @@ def _read_bounded_json_file(path: Path) -> bytes:
     return raw
 
 
+def _read_exact_regular_file(path: Path, *, expected_bytes: int, name: str) -> bytes:
+    """Read one regular file only after its exact byte length is established."""
+
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat_module.S_ISREG(metadata.st_mode):
+            raise ValueError(f"checkpoint {name} must be a regular file")
+        if metadata.st_size != expected_bytes:
+            raise ValueError(
+                f"checkpoint {name} must be exactly {expected_bytes} bytes"
+            )
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            raw = stream.read(expected_bytes + 1)
+        if len(raw) != expected_bytes:
+            raise ValueError(f"checkpoint {name} changed while being read")
+    finally:
+        os.close(descriptor)
+    return raw
+
+
 def _require_json_text_depth(raw: bytes, *, name: str) -> None:
     """Reject JSON nests deeper than ``_MAX_TREE_DEPTH`` before RecursionError."""
 
@@ -1927,7 +1948,11 @@ def _restore_owned_bundle(root: Path) -> tuple[ReferenceLifeRunner, ReferenceLif
     payload = {name: manifest_data[name] for name in _MANIFEST_PAYLOAD_KEYS}
     if bundle_id != _bundle_id(payload):
         _fail("manifest bundle_id does not match its canonical payload")
-    marker = (root / _COMMITTED_NAME).read_bytes()
+    marker = _read_exact_regular_file(
+        root / _COMMITTED_NAME,
+        expected_bytes=_SHA256_LENGTH + 1,
+        name="COMMITTED marker",
+    )
     if marker != f"{bundle_id}\n".encode("ascii"):
         _fail("checkpoint COMMITTED marker is missing or inconsistent")
 

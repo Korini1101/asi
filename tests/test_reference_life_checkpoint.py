@@ -366,6 +366,28 @@ def test_restore_rejects_rehashed_duplicate_prototype_metadata_key(
         load_reference_life_checkpoint(duplicate)
 
 
+def test_restore_bounds_committed_marker_before_reading_payload(
+    saved_case: tuple[ReferenceLifeRunner, ReferenceLifeState, ReferenceLifeState, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, _, _, checkpoint = saved_case
+    oversized = tmp_path / "oversized-committed-marker"
+    shutil.copytree(checkpoint, oversized)
+    (oversized / "COMMITTED").write_bytes(b"0" * 66)
+    real_read_bytes = Path.read_bytes
+
+    def reject_unbounded_marker_read(path: Path) -> bytes:
+        if path.name == "COMMITTED":
+            raise AssertionError("COMMITTED must be size-checked before its payload is read")
+        return real_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", reject_unbounded_marker_read)
+
+    with pytest.raises(ValueError, match="COMMITTED marker"):
+        load_reference_life_checkpoint(oversized)
+
+
 def test_publish_failure_and_existing_generation_leave_runner_unchanged(
     saved_case: tuple[ReferenceLifeRunner, ReferenceLifeState, ReferenceLifeState, Path],
     tmp_path: Path,
