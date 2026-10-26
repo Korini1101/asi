@@ -21,6 +21,7 @@ from alberta_framework import (
     normalizer_from_config,
     optimizer_from_config,
 )
+from alberta_framework.core.swift_td import SwiftTD
 
 # =============================================================================
 # Optimizer round-trip
@@ -88,6 +89,22 @@ class TestOptimizerConfig:
     def test_unknown_optimizer_raises(self):
         with pytest.raises(ValueError, match="Unknown optimizer"):
             optimizer_from_config({"type": "UnknownOpt"})
+
+    @pytest.mark.parametrize(
+        ("optimizer", "missing_field"),
+        [
+            (LMS(step_size=0.25), "step_size"),
+            (SwiftTD(trace_decay=0.75), "trace_decay"),
+        ],
+    )
+    def test_missing_optimizer_field_cannot_restore_a_default(
+        self, optimizer, missing_field
+    ):
+        config = optimizer.to_config()
+        del config[missing_field]
+
+        with pytest.raises(ValueError, match="optimizer config fields"):
+            optimizer_from_config(config)
 
 
 # =============================================================================

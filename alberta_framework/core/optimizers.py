@@ -2427,11 +2427,25 @@ def optimizer_from_config(config: dict[str, Any]) -> Optimizer[Any]:
     """
     _ensure_registry_extras()
     config = dict(config)
+    if any(type(key) is not str for key in config):
+        raise ValueError("optimizer config must use exact string keys")
+    if "type" not in config:
+        raise ValueError("optimizer config fields do not match the schema")
     type_name = config.pop("type")
     host_type = _require_exact_str("type_name", type_name)
     cls = _OPTIMIZER_REGISTRY.get(host_type)
     if cls is None:
         raise ValueError(f"Unknown optimizer type: '{host_type}'")
+    expected_fields = set(cls().to_config())
+    observed_fields = {"type", *config}
+    if host_type == "Adam" and observed_fields == expected_fields - {"weight_decay"}:
+        # Adam configs written before weight decay was added have one explicit
+        # compatibility route. No other constructor defaults are a serialized
+        # config migration policy.
+        config["weight_decay"] = 0.0
+        observed_fields.add("weight_decay")
+    if observed_fields != expected_fields:
+        raise ValueError("optimizer config fields do not match the schema")
     result: Optimizer[Any] = cls(**config)
     return result
 

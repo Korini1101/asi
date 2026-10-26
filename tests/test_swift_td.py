@@ -204,8 +204,10 @@ class TestSwiftTDInit:
         assert state.meta_step_size == 0.0
 
     def test_config_factory_rejects_nonfinite_swifttd_values(self):
+        config = SwiftTD().to_config()
+        config["initial_step_size"] = math.nan
         with pytest.raises(ValueError, match="initial_step_size"):
-            optimizer_from_config({"type": "SwiftTD", "initial_step_size": math.nan})
+            optimizer_from_config(config)
 
     def test_update_returns_correct_shapes(self):
         optimizer = SwiftTD(initial_step_size=0.01)
