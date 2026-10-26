@@ -542,8 +542,8 @@ class LearningSignalEstimator:
         array = jnp.asarray(value)
         if array.shape != shape:
             raise ValueError(f"{name} must have shape {shape}, got {array.shape}")
-        if not jnp.issubdtype(array.dtype, jnp.inexact):
-            raise ValueError(f"{name} must have a floating dtype")
+        if not jnp.issubdtype(array.dtype, jnp.floating):
+            raise ValueError(f"{name} must have a real floating dtype")
         return jnp.asarray(array, dtype=jnp.float32)
 
     @staticmethod

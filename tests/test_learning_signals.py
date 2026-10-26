@@ -374,6 +374,29 @@ def test_shape_and_dtype_validation_is_strict() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "field",
+    (
+        "member_means",
+        "predicted_aleatoric_variances",
+        "observed_target",
+        "observed_loss",
+    ),
+)
+def test_learning_signal_inputs_reject_complex_dtypes(field: str) -> None:
+    estimator = _estimator()
+    inputs = {
+        "member_means": jnp.zeros((2, 1), dtype=jnp.float32),
+        "predicted_aleatoric_variances": jnp.ones((2, 1), dtype=jnp.float32),
+        "observed_target": jnp.zeros((1,), dtype=jnp.float32),
+        "observed_loss": jnp.asarray(0.0, dtype=jnp.float32),
+    }
+    inputs[field] = inputs[field].astype(jnp.complex64) + 1.0j
+
+    with pytest.raises(ValueError, match="real floating dtype"):
+        estimator.observe(estimator.init(), **inputs)
+
+
 def test_jit_scan_parity_and_fixed_output_shapes() -> None:
     estimator = _estimator(change_calibration_steps=4)
     num_steps = 12
