@@ -13,6 +13,7 @@ from numbers import Real
 from typing import Any, SupportsIndex, cast
 
 import chex
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -51,6 +52,23 @@ def _require_exact_bool(name: str, value: object) -> bool:
     if type(value) is not bool:
         raise ValueError(f"{name} must be an exact bool")
     return value
+
+
+def _require_threefry_key(value: object, *, name: str = "key") -> Array:
+    """Require one typed scalar Threefry key before splitting a stream root."""
+    actual_type = type(value)
+    if not (
+        issubclass(actual_type, jax.Array) or issubclass(actual_type, jax.core.Tracer)
+    ):
+        raise TypeError(f"{name} must be a typed scalar Threefry JAX key")
+    trusted = cast(Array, value)
+    try:
+        words = jr.key_data(trusted)
+    except (TypeError, ValueError) as error:
+        raise TypeError(f"{name} must be a typed scalar Threefry JAX key") from error
+    if trusted.shape != () or words.shape != (2,) or words.dtype != jnp.dtype(jnp.uint32):
+        raise TypeError(f"{name} must be a typed scalar Threefry JAX key")
+    return trusted
 
 
 def _require_float32_resource(
@@ -227,7 +245,7 @@ class RandomWalkStream:
         Returns:
             Initial stream state with random weights
         """
-        key, subkey = jr.split(key)
+        key, subkey = jr.split(_require_threefry_key(key))
         weights = jr.normal(subkey, (self._feature_dim,), dtype=jnp.float32)
         return RandomWalkState(key=key, true_weights=weights)
 
@@ -358,7 +376,7 @@ class HiddenStateAR2Stream:
 
     def init(self, key: Array) -> HiddenStateAR2State:
         """Initialize AR state."""
-        key, k1, k2 = jr.split(key, 3)
+        key, k1, k2 = jr.split(_require_threefry_key(key), 3)
         x_prev = jr.normal(k1, (self._feature_dim,), dtype=jnp.float32)
         x_prev2 = jr.normal(k2, (self._feature_dim,), dtype=jnp.float32)
         return HiddenStateAR2State(key=key, x_prev=x_prev, x_prev2=x_prev2)
@@ -455,7 +473,7 @@ class AbruptChangeStream:
         Returns:
             Initial stream state
         """
-        key, subkey = jr.split(key)
+        key, subkey = jr.split(_require_threefry_key(key))
         weights = jr.normal(subkey, (self._feature_dim,), dtype=jnp.float32)
         return AbruptChangeState(
             key=key,
@@ -597,6 +615,7 @@ class SuttonExperiment1Stream:
         Returns:
             Initial stream state with all +1 signs
         """
+        key = _require_threefry_key(key)
         signs = jnp.ones(self._num_relevant, dtype=jnp.float32)
         return SuttonExperiment1State(
             key=key,
@@ -731,7 +750,7 @@ class CyclicStream:
         Returns:
             Initial stream state with pre-generated configurations
         """
-        key, key_configs = jr.split(key)
+        key, key_configs = jr.split(_require_threefry_key(key))
         configurations = jr.normal(
             key_configs,
             (self._num_configurations, self._feature_dim),
@@ -845,7 +864,7 @@ class PeriodicChangeStream:
         Returns:
             Initial stream state with random base weights and phases
         """
-        key, key_weights, key_phases = jr.split(key, 3)
+        key, key_weights, key_phases = jr.split(_require_threefry_key(key), 3)
         base_weights = jr.normal(key_weights, (self._feature_dim,), dtype=jnp.float32)
         # Random phases in [0, 2π) for each weight
         phases = jr.uniform(key_phases, (self._feature_dim,), minval=0.0, maxval=2.0 * jnp.pi)
@@ -1170,7 +1189,7 @@ class DynamicScaleShiftStream:
         Returns:
             Initial stream state with random weights and scales
         """
-        key, k_weights, k_scales = jr.split(key, 3)
+        key, k_weights, k_scales = jr.split(_require_threefry_key(key), 3)
         weights = jr.normal(k_weights, (self._feature_dim,), dtype=jnp.float32)
         # Initial scales: log-uniform between min and max
         log_scales = jr.uniform(
@@ -1331,7 +1350,7 @@ class ScaleDriftStream:
         Returns:
             Initial stream state with random weights and unit scales
         """
-        key, k_weights = jr.split(key)
+        key, k_weights = jr.split(_require_threefry_key(key))
         weights = jr.normal(k_weights, (self._feature_dim,), dtype=jnp.float32)
         # Initial log-scales at 0 (scale = 1)
         log_scales = jnp.zeros(self._feature_dim, dtype=jnp.float32)
