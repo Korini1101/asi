@@ -621,14 +621,19 @@ def parameterless_layer_norm(inputs: Array, epsilon: float = 1e-5) -> Array:
         safe_scale,
         jnp.ones_like(safe_scale),
     )
-    scaled_inputs = fallback_inputs / fallback_scale
+    # Dividing by a float32 scale above 2**126 can lower to multiplication by
+    # a subnormal reciprocal that XLA:CPU flushes to zero.  Scaling by the
+    # scale's binary exponent is exact and keeps the largest finite input in
+    # [0.5, 1.0), including values near the float32 ceiling.
+    _, fallback_exponent = jnp.frexp(fallback_scale)
+    scaled_inputs = jnp.ldexp(fallback_inputs, -fallback_exponent)
     scaled_centered = scaled_inputs - jnp.mean(
         scaled_inputs, axis=-1, keepdims=True
     )
     scaled_variance = jnp.mean(
         jnp.square(scaled_centered), axis=-1, keepdims=True
     )
-    scaled_epsilon = (epsilon_array / fallback_scale) / fallback_scale
+    scaled_epsilon = jnp.ldexp(epsilon_array, -2 * fallback_exponent)
     stable_denominator = jnp.where(
         scaled_variance > 0.0,
         scaled_variance + scaled_epsilon,

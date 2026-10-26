@@ -2219,17 +2219,22 @@ def test_reference_dense_rtu_and_live_sparse_feedforward_initialization() -> Non
     assert jnp.allclose(jnp.mean(jnp.square(normalized)), 1.0, atol=1e-6)
 
 
-def test_parameterless_layer_norm_preserves_large_finite_contrast() -> None:
-    inputs = jnp.asarray((7e37,) * 4 + (-7e37,) * 4, dtype=jnp.float32)
+@pytest.mark.parametrize("magnitude", [7e37, 1e38, 3e38])
+def test_parameterless_layer_norm_preserves_large_finite_contrast(
+    magnitude: float,
+) -> None:
+    inputs = jnp.asarray(
+        (magnitude,) * 4 + (-magnitude,) * 4,
+        dtype=jnp.float32,
+    )
 
     normalized = parameterless_layer_norm(inputs, epsilon=1e-8)
+    compiled = jax.jit(parameterless_layer_norm)(inputs, epsilon=1e-8)
 
     assert bool(jnp.all(jnp.isfinite(normalized)))
-    np.testing.assert_allclose(
-        normalized,
-        jnp.asarray((1.0,) * 4 + (-1.0,) * 4, dtype=jnp.float32),
-        rtol=1e-6,
-    )
+    expected = jnp.asarray((1.0,) * 4 + (-1.0,) * 4, dtype=jnp.float32)
+    np.testing.assert_allclose(normalized, expected, rtol=1e-6)
+    np.testing.assert_allclose(compiled, expected, rtol=1e-6)
 
 
 @pytest.mark.parametrize("epsilon", [1e-5, 1e-8])
