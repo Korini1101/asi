@@ -321,6 +321,23 @@ def test_get_final_performance_accepts_unequal_trace_lengths_when_window_fits() 
     assert performance["short"] == performance["long"] == (2.0, pytest.approx(np.sqrt(2.0)))
 
 
+@pytest.mark.parametrize("candidate_seeds", [[2, 3], [1, 0]])
+def test_get_final_performance_rejects_unmatched_seed_schedules(
+    candidate_seeds: list[int],
+) -> None:
+    baseline = _two_seed_trace()._replace(config_name="baseline")
+    candidate = baseline._replace(
+        config_name="candidate",
+        seeds=candidate_seeds,
+    )
+
+    with pytest.raises(ValueError, match="same ordered seed schedule"):
+        get_final_performance(
+            {"baseline": baseline, "candidate": candidate},
+            window=2,
+        )
+
+
 def test_get_final_performance_window_longer_than_trace_uses_full_trace() -> None:
     """The documented min(window, n_steps) convention is unchanged for window > 0."""
     result = get_final_performance({"candidate": _two_seed_trace()}, window=100)

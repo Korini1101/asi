@@ -35,6 +35,7 @@ from alberta_framework._scan_resources import (
 from alberta_framework._seed_validation import (
     JAX_SEED_SEQUENCE_MAX_LENGTH,
     require_jax_seed,
+    require_unique_jax_seeds,
 )
 from alberta_framework.core.learners import (
     LinearLearner,
@@ -669,6 +670,7 @@ def get_final_performance(
         ValueError: If ``window`` is not positive, a metric array has no
             time steps, any metric sample is non-finite, or ``window`` exceeds
             the shortest trace while trace lengths differ between methods.
+            Every aggregate must also use the same ordered seed schedule.
             ``window=0`` is not "the last step": ``arr[:, -0:]`` is the full
             trace, so the helper refuses rather than silently reporting a
             full-horizon mean.
@@ -679,9 +681,20 @@ def get_final_performance(
         raise ValueError(f"window must be positive (got {window})")
 
     metric_arrays: dict[str, NDArray[np.float64]] = {}
+    common_seeds: tuple[int, ...] | None = None
     for name, agg in results.items():
         host_name = _require_exact_str("name", name)
         host_metric_inner = _require_exact_str("metric", metric)
+        seeds = require_unique_jax_seeds(
+            agg.seeds,
+            name=f"AggregatedResults '{host_name}' seeds",
+        )
+        if common_seeds is None:
+            common_seeds = seeds
+        elif seeds != common_seeds:
+            raise ValueError(
+                "every AggregatedResults comparison must use the same ordered seed schedule"
+            )
         arr = agg.metric_arrays[metric]
         if arr.shape[1] == 0:
             raise ValueError(
