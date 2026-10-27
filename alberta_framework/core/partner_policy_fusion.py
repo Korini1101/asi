@@ -1767,6 +1767,11 @@ class PartnerPolicyFusion:
             parsed: npt.NDArray[np.float32] = np.asarray(value, dtype=np.float32)
         if not np.all(np.isfinite(parsed)):
             raise ValueError(f"{name} must contain finite float32 values")
+        if any(
+            cast(float, original).hex() != float(narrowed).hex()
+            for original, narrowed in zip(untyped.flat, parsed.flat, strict=True)
+        ):
+            raise ValueError(f"{name} values must be exactly representable in float32")
         return jnp.asarray(parsed, dtype=jnp.float32)
 
     @classmethod
@@ -1843,9 +1848,14 @@ class PartnerPolicyFusion:
         predicted = state_payload.get("armed_predicted_reliability")
         if type(predicted) is not float:
             raise ValueError("armed_predicted_reliability must be a JSON float")
-        parsed_predicted = np.float32(predicted)
+        with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+            parsed_predicted = np.float32(predicted)
         if not np.isfinite(parsed_predicted):
             raise ValueError("armed_predicted_reliability must be finite float32")
+        if predicted.hex() != float(parsed_predicted).hex():
+            raise ValueError(
+                "armed_predicted_reliability must be exactly representable in float32"
+            )
         state = PartnerPolicyFusionState(
             reliability_weights=cls._checkpoint_float_array(
                 state_payload.get("reliability_weights"),
