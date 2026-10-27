@@ -7,6 +7,7 @@ import json
 import numpy as np
 import pytest
 
+import alberta_framework.utils.metrics as metrics_module
 from alberta_framework.utils.metrics import (
     ContinualLearningSummary,
     StabilityGap,
@@ -182,6 +183,33 @@ def test_recovery_reports_minus_one_when_threshold_is_not_reached() -> None:
         threshold=0.8,
         window_size=2,
     )
+
+    np.testing.assert_array_equal(recovery, [-1])
+
+
+def test_recovery_does_not_rescan_each_candidate_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A legal wide window must not trigger quadratic repeated reductions."""
+
+    original_all = np.all
+    calls = 0
+
+    def bounded_all(*args: object, **kwargs: object) -> np.bool_:
+        nonlocal calls
+        calls += 1
+        if calls > 4:
+            raise AssertionError("recovery search rescanned overlapping windows")
+        return original_all(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(metrics_module.np, "all", bounded_all)
+        recovery = compute_recovery_lengths(
+            np.zeros(256, dtype=np.float64),
+            change_points=[0],
+            threshold=1.0,
+            window_size=128,
+        )
 
     np.testing.assert_array_equal(recovery, [-1])
 
