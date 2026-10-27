@@ -221,10 +221,7 @@ def _scale_safe_mean(values: Array, *, axis: int) -> Array:
     _, exponent = jnp.frexp(peak)
     exponent = jnp.where(peak > 0.0, exponent, 0)
     scaled = jnp.ldexp(values, -exponent)
-    anchor = jnp.take(scaled, 0, axis=axis)
-    scaled_mean = anchor + jnp.mean(
-        scaled - jnp.expand_dims(anchor, axis=axis), axis=axis
-    )
+    scaled_mean = jnp.mean(scaled, axis=axis)
     return jnp.ldexp(scaled_mean, jnp.squeeze(exponent, axis=axis))
 
 
@@ -234,10 +231,7 @@ def _scale_safe_mean_and_variance(values: Array, *, axis: int) -> tuple[Array, A
     _, exponent = jnp.frexp(peak)
     exponent = jnp.where(peak > 0.0, exponent, 0)
     scaled = jnp.ldexp(values, -exponent)
-    anchor = jnp.take(scaled, 0, axis=axis)
-    scaled_mean = anchor + jnp.mean(
-        scaled - jnp.expand_dims(anchor, axis=axis), axis=axis
-    )
+    scaled_mean = jnp.mean(scaled, axis=axis)
     expanded_mean = jnp.expand_dims(scaled_mean, axis=axis)
     scaled_variance = jnp.mean(jnp.square(scaled - expanded_mean), axis=axis)
     reduced_exponent = jnp.squeeze(exponent, axis=axis)
