@@ -208,6 +208,45 @@ def _tree_l2_norm(tree: Any) -> Array:
     return jnp.sqrt(jnp.sum(jnp.stack(squared)))
 
 
+def _scale_safe_ratio(numerator: Array, denominator: float) -> Array:
+    """Divide by one positive float32 scalar without a subnormal reciprocal."""
+    scale = jnp.asarray(denominator, dtype=numerator.dtype)
+    mantissa, exponent = jnp.frexp(scale)
+    return jnp.ldexp(numerator, -exponent) / mantissa
+
+
+def _scale_safe_mean(values: Array, *, axis: int) -> Array:
+    """Reduce finite float32 values without overflowing their intermediate sum."""
+    peak = jnp.max(jnp.abs(values), axis=axis, keepdims=True)
+    _, exponent = jnp.frexp(peak)
+    exponent = jnp.where(peak > 0.0, exponent, 0)
+    scaled = jnp.ldexp(values, -exponent)
+    anchor = jnp.take(scaled, 0, axis=axis)
+    scaled_mean = anchor + jnp.mean(
+        scaled - jnp.expand_dims(anchor, axis=axis), axis=axis
+    )
+    return jnp.ldexp(scaled_mean, jnp.squeeze(exponent, axis=axis))
+
+
+def _scale_safe_mean_and_variance(values: Array, *, axis: int) -> tuple[Array, Array]:
+    """Return a population mean and variance in a power-of-two scaled domain."""
+    peak = jnp.max(jnp.abs(values), axis=axis, keepdims=True)
+    _, exponent = jnp.frexp(peak)
+    exponent = jnp.where(peak > 0.0, exponent, 0)
+    scaled = jnp.ldexp(values, -exponent)
+    anchor = jnp.take(scaled, 0, axis=axis)
+    scaled_mean = anchor + jnp.mean(
+        scaled - jnp.expand_dims(anchor, axis=axis), axis=axis
+    )
+    expanded_mean = jnp.expand_dims(scaled_mean, axis=axis)
+    scaled_variance = jnp.mean(jnp.square(scaled - expanded_mean), axis=axis)
+    reduced_exponent = jnp.squeeze(exponent, axis=axis)
+    return (
+        jnp.ldexp(scaled_mean, reduced_exponent),
+        jnp.ldexp(scaled_variance, 2 * reduced_exponent),
+    )
+
+
 def _saturating_increment(value: Array, maximum: int) -> Array:
     bound = jnp.asarray(maximum, dtype=jnp.int32)
     return jnp.minimum(jnp.maximum(value, 0), bound - 1) + 1
@@ -1111,8 +1150,11 @@ class RecurrentLatentWorldModelEnsemble:
 
         mean_logits = parameters.mean_kernel @ next_hidden + parameters.mean_bias
         variance_logits = parameters.variance_kernel @ next_hidden + parameters.variance_bias
-        grounded = self._config.max_prediction_magnitude * jnp.tanh(
-            mean_logits[:-1] / self._config.max_prediction_magnitude
+        prediction_scale = jnp.asarray(
+            self._config.max_prediction_magnitude, dtype=jnp.float32
+        )
+        grounded = prediction_scale * jnp.tanh(
+            _scale_safe_ratio(mean_logits[:-1], self._config.max_prediction_magnitude)
         )
         continuation = jax.nn.sigmoid(mean_logits[-1])
         means = jnp.concatenate((grounded, continuation[None]), axis=0)
@@ -1141,8 +1183,10 @@ class RecurrentLatentWorldModelEnsemble:
         raw = jnp.stack([item[1] for item in member_outputs], axis=0)
         means = jnp.stack([item[2] for item in member_outputs], axis=0)
         variances = jnp.stack([item[3] for item in member_outputs], axis=0)
-        epistemic = jnp.var(means, axis=0)
-        mean_variance = jnp.mean(variances, axis=0)
+        mean_prediction, epistemic = _scale_safe_mean_and_variance(means, axis=0)
+        mean_variance = _scale_safe_mean(variances, axis=0)
+        aleatoric_uncertainty = _scale_safe_mean(mean_variance, axis=0)
+        epistemic_disagreement = _scale_safe_mean(epistemic, axis=0)
         warmup = state.event_count >= self._config.uncertainty_warmup_steps
         finite = (
             jnp.all(jnp.isfinite(next_hidden))
@@ -1156,24 +1200,27 @@ class RecurrentLatentWorldModelEnsemble:
             & jnp.all(variances <= self._config.max_variance)
             & jnp.all(jnp.isfinite(epistemic))
             & jnp.all(jnp.isfinite(mean_variance))
+            & jnp.all(jnp.isfinite(mean_prediction))
+            & jnp.isfinite(aleatoric_uncertainty)
+            & jnp.isfinite(epistemic_disagreement)
         )
         uncertainty_available = finite & warmup
         return RecurrentLatentWorldModelPrediction(
             member_raw_outputs=raw,
             mean_raw_output=jnp.mean(raw, axis=0),
             member_mean_predictions=means,
-            mean_prediction=jnp.mean(means, axis=0),
+            mean_prediction=mean_prediction,
             member_next_observations=means[:, : self._config.observation_dim],
-            mean_next_observation=jnp.mean(means[:, : self._config.observation_dim], axis=0),
+            mean_next_observation=mean_prediction[: self._config.observation_dim],
             member_rewards=means[:, -2],
-            mean_reward=jnp.mean(means[:, -2]),
+            mean_reward=mean_prediction[-2],
             member_continuations=means[:, -1],
-            mean_continuation=jnp.mean(means[:, -1]),
+            mean_continuation=mean_prediction[-1],
             member_aleatoric_variances=variances,
             mean_aleatoric_variance=mean_variance,
-            aleatoric_uncertainty=jnp.mean(mean_variance),
+            aleatoric_uncertainty=aleatoric_uncertainty,
             per_head_epistemic_variance=epistemic,
-            epistemic_disagreement=jnp.mean(epistemic),
+            epistemic_disagreement=epistemic_disagreement,
             member_next_hidden_states=next_hidden,
             warmup_ready=warmup,
             availability=RecurrentLatentPredictionAvailability(
