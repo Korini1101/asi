@@ -167,6 +167,48 @@ def test_world_model_preserves_direct_numeric_dtype_canonicalization() -> None:
     assert targets.dtype == jnp.float32
 
 
+@pytest.mark.parametrize(
+    "field",
+    ["observation", "action", "reward", "next_observation"],
+)
+def test_world_model_update_rejects_complex_operands(field: str) -> None:
+    """A direct update must not discard imaginary transition components."""
+    model = OneStepWorldModel(
+        WorldModelConfig(
+            observation_dim=2,
+            n_actions=2,
+            hidden_sizes=(),
+            sparsity=0.0,
+        )
+    )
+    state = model.init(jr.key(13))
+    values = {
+        "observation": jnp.zeros((2,), dtype=jnp.float32),
+        "action": jnp.asarray(0, dtype=jnp.int32),
+        "reward": jnp.asarray(0.5, dtype=jnp.float32),
+        "next_observation": jnp.ones((2,), dtype=jnp.float32),
+    }
+    values[field] = jnp.full(
+        values[field].shape,
+        1.0 + 2.0j,
+        dtype=jnp.complex64,
+    )
+
+    def call() -> object:
+        return model.update(
+            state,
+            values["observation"],
+            values["action"],
+            values["reward"],
+            values["next_observation"],
+        )
+
+    with pytest.raises(ValueError, match=rf"{field} must have a real numeric dtype"):
+        call()
+    with pytest.raises(ValueError, match=rf"{field} must have a real numeric dtype"):
+        jax.jit(call)()
+
+
 def test_world_model_update_is_finite_and_shape_stable() -> None:
     cfg = WorldModelConfig(
         observation_dim=3,
