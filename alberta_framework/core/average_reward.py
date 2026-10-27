@@ -2460,7 +2460,7 @@ def run_differential_sarsa_from_arrays(
         ValueError: If ``rewards`` is empty, exceeds the documented
             scan-length ceiling (``_AVERAGE_REWARD_SEQUENCE_MAX_STEPS``), or
             ``next_observations``/``discounts`` do not share its leading
-            length.
+            length, or if ``state`` was not primed with :meth:`start`.
     """
     num_steps = _require_avg_reward_sequence_length("rewards", rewards)
     _require_avg_reward_matching_length(
@@ -2468,6 +2468,12 @@ def run_differential_sarsa_from_arrays(
     )
     if discounts is not None:
         _require_avg_reward_matching_length("discounts", discounts, expected=num_steps)
+    agent._require_state_contract(state)
+    last_action = int(jax.device_get(state.last_action))
+    if not 0 <= last_action < agent.config.n_actions:
+        raise ValueError(
+            "differential SARSA array state must be primed with agent.start"
+        )
     start = time.time()
     if discounts is None:
         discounts = jnp.ones_like(rewards, dtype=jnp.float32)
