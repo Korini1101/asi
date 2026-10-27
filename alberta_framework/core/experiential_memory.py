@@ -115,6 +115,24 @@ class ExperientialMemoryConfig:
             raise ValueError("config fields do not match the serialized schema")
         if type(config["type"]) is not str or config["type"] != "ExperientialMemoryConfig":
             raise ValueError("config type differs")
+        integer_fields = {
+            "capacity",
+            "observation_dim",
+            "key_dim",
+            "action_dim",
+            "outcome_dim",
+            "top_k",
+            "min_neighbors",
+            "max_age",
+        }
+        for name, value in config.items():
+            if name == "type":
+                continue
+            expected_type = int if name in integer_fields else float
+            if type(value) is not expected_type:
+                raise ValueError(
+                    "serialized experiential memory config values must use exact JSON scalar types"
+                )
         payload = dict(config)
         payload.pop("type")
         return cls(**payload)
