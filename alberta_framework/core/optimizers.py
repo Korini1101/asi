@@ -38,6 +38,7 @@ from alberta_framework.core.types import (
     LMSState,
     ObGDState,
     TDIDBDState,
+    finite_float32_log,
 )
 from alberta_framework.core.update_safety import (
     floating_tree_is_finite,
@@ -1947,15 +1948,14 @@ class TDIDBD(TDOptimizer[TDIDBDState]):
         _require_float32_update_working_set(
             "TDIDBD update working set", 22 * feature_dim + 8
         )
+        log_step_size = finite_float32_log(self._initial_step_size)
         return TDIDBDState(
-            log_step_sizes=jnp.full(
-                feature_dim, jnp.log(self._initial_step_size), dtype=jnp.float32
-            ),
+            log_step_sizes=jnp.full(feature_dim, log_step_size, dtype=jnp.float32),
             eligibility_traces=jnp.zeros(feature_dim, dtype=jnp.float32),
             h_traces=jnp.zeros(feature_dim, dtype=jnp.float32),
             meta_step_size=jnp.array(self._meta_step_size, dtype=jnp.float32),
             trace_decay=jnp.array(self._trace_decay, dtype=jnp.float32),
-            bias_log_step_size=jnp.array(jnp.log(self._initial_step_size), dtype=jnp.float32),
+            bias_log_step_size=jnp.array(log_step_size, dtype=jnp.float32),
             bias_eligibility_trace=jnp.array(0.0, dtype=jnp.float32),
             bias_h_trace=jnp.array(0.0, dtype=jnp.float32),
             previous_gamma=jnp.array(1.0, dtype=jnp.float32),
@@ -2170,17 +2170,16 @@ class AutoTDIDBD(TDOptimizer[AutoTDIDBDState]):
         _require_float32_update_working_set(
             "AutoTDIDBD update working set", 32 * feature_dim + 8
         )
+        log_step_size = finite_float32_log(self._initial_step_size)
         return AutoTDIDBDState(
-            log_step_sizes=jnp.full(
-                feature_dim, jnp.log(self._initial_step_size), dtype=jnp.float32
-            ),
+            log_step_sizes=jnp.full(feature_dim, log_step_size, dtype=jnp.float32),
             eligibility_traces=jnp.zeros(feature_dim, dtype=jnp.float32),
             h_traces=jnp.zeros(feature_dim, dtype=jnp.float32),
             normalizers=jnp.ones(feature_dim, dtype=jnp.float32),
             meta_step_size=jnp.array(self._meta_step_size, dtype=jnp.float32),
             trace_decay=jnp.array(self._trace_decay, dtype=jnp.float32),
             normalizer_decay=jnp.array(self._normalizer_decay, dtype=jnp.float32),
-            bias_log_step_size=jnp.array(jnp.log(self._initial_step_size), dtype=jnp.float32),
+            bias_log_step_size=jnp.array(log_step_size, dtype=jnp.float32),
             bias_eligibility_trace=jnp.array(0.0, dtype=jnp.float32),
             bias_h_trace=jnp.array(0.0, dtype=jnp.float32),
             bias_normalizer=jnp.array(1.0, dtype=jnp.float32),
