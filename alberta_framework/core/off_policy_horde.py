@@ -1020,8 +1020,36 @@ class OffPolicyHordeLearner:
             optimizer_from_config,
         )
 
-        config = dict(config)
-        config.pop("type", None)
+        expected_fields = {
+            "type",
+            "horde_spec",
+            "hidden_sizes",
+            "optimizer",
+            "bounder",
+            "normalizer",
+            "sparsity",
+            "leaky_relu_slope",
+            "use_layer_norm",
+            "head_optimizer",
+            "trace_mode",
+            "utility_decay",
+            "ratio_clip",
+            "trace_ratio_clip",
+            "min_behavior_probability",
+        }
+        if type(config) is not dict or any(type(key) is not str for key in config):
+            raise ValueError("OffPolicyHordeLearner config must be an exact dict")
+        if set(config) != expected_fields:
+            raise ValueError("OffPolicyHordeLearner config fields do not match the schema")
+        if type(config["type"]) is not str or config["type"] != "OffPolicyHordeLearner":
+            raise ValueError("OffPolicyHordeLearner config type is invalid")
+        if type(config["hidden_sizes"]) is not list:
+            raise ValueError("OffPolicyHordeLearner config hidden_sizes must be a list")
+        if type(config["trace_mode"]) is not str:
+            raise ValueError("OffPolicyHordeLearner config trace_mode must be a string")
+
+        config = config.copy()
+        config.pop("type")
         horde_spec = HordeSpec.from_config(config.pop("horde_spec"))
         optimizer = optimizer_from_config(config.pop("optimizer"))
         bounder_cfg = config.pop("bounder", None)
