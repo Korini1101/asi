@@ -804,6 +804,31 @@ def _make_nlqhac_agent() -> NonlinearQHordeActorCriticAgent:
     )
 
 
+@pytest.mark.parametrize(
+    "factory",
+    [
+        _make_agent,
+        _make_qhorde_agent,
+        _make_nlhac_agent,
+        _make_nlqhac_agent,
+    ],
+)
+def test_horde_actor_critic_construction_requires_exact_schema(
+    factory: Callable[[], Any],
+) -> None:
+    agent = factory()
+    payload = agent.to_config()
+    malformed_payloads = [
+        {key: value for key, value in payload.items() if key != "type"},
+        {**payload, "type": "DifferentAgent"},
+        {**payload, "unexpected": "ignored"},
+    ]
+
+    for malformed in malformed_payloads:
+        with pytest.raises(ValueError, match="construction fields"):
+            type(agent).from_config(malformed)
+
+
 def _init_nlhac(
     agent: NonlinearHordeActorCriticAgent,
 ) -> NonlinearHordeActorCriticState:
