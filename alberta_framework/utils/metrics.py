@@ -583,21 +583,30 @@ def compute_recovery_lengths(
     if np.any(np.diff(points) <= 0):
         raise ValueError("change_points must be strictly increasing")
 
+    meets_threshold = np.isfinite(values)
+    if higher_is_better:
+        meets_threshold &= values >= threshold_value
+    else:
+        meets_threshold &= values <= threshold_value
+    failure_prefix = np.empty(values.size + 1, dtype=np.int64)
+    failure_prefix[0] = 0
+    np.cumsum(~meets_threshold, dtype=np.int64, out=failure_prefix[1:])
+
     recoveries = np.full(points.shape, -1, dtype=np.int64)
     for point_index, start in enumerate(points):
         stop = points[point_index + 1] if point_index + 1 < points.size else values.size
-        for window_start in range(int(start), int(stop) - window_size + 1):
-            window = values[window_start : window_start + window_size]
-            meets = np.all(np.isfinite(window)) and (
-                np.all(window >= threshold_value)
-                if higher_is_better
-                else np.all(window <= threshold_value)
-            )
-            if meets:
-                recoveries[point_index] = (
-                    window_start + window_size - int(start)
-                )
-                break
+        start_index = int(start)
+        stop_index = int(stop)
+        if stop_index - start_index < window_size:
+            continue
+        window_failures = (
+            failure_prefix[start_index + window_size : stop_index + 1]
+            - failure_prefix[start_index : stop_index - window_size + 1]
+        )
+        qualifying_windows = window_failures == 0
+        if bool(np.any(qualifying_windows)):
+            first_window = int(np.argmax(qualifying_windows))
+            recoveries[point_index] = first_window + window_size
     return recoveries
 
 
