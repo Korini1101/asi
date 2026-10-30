@@ -292,6 +292,45 @@ def _extract_mean_step_size(
     return jnp.array(0.0, dtype=jnp.float32)
 
 
+def _finite_layer_norm(values: Array) -> Array:
+    """Preserve parameterless layer norm when only its reductions overflow."""
+    mean = jnp.mean(values)
+    variance = jnp.var(values)
+    direct = (values - mean) / jnp.sqrt(variance + 1e-5)
+    reduction_overflowed = (
+        (~jnp.isfinite(mean) | ~jnp.isfinite(variance))
+        & jnp.all(jnp.isfinite(values))
+    )
+
+    def scaled_layer_norm(finite_values: Array) -> Array:
+        scale = jnp.max(jnp.abs(finite_values))
+        _, exponent = jnp.frexp(scale)
+        scaled = jnp.ldexp(finite_values, -exponent)
+        centered = scaled - jnp.mean(scaled)
+        scaled_variance = jnp.mean(centered * centered)
+        positive_variance = scaled_variance > 0.0
+        safe_variance = jnp.where(
+            positive_variance,
+            scaled_variance,
+            jnp.ones_like(scaled_variance),
+        )
+        contrast = centered * jax.lax.rsqrt(safe_variance)
+        constant = jnp.ldexp(centered, exponent) * jax.lax.rsqrt(
+            jnp.asarray(1e-5, dtype=finite_values.dtype)
+        )
+        return jnp.where(positive_variance, contrast, constant)
+
+    return cast(
+        Array,
+        jax.lax.cond(
+            reduction_overflowed,
+            scaled_layer_norm,
+            lambda _: direct,
+            values,
+        ),
+    )
+
+
 def _forward_mlp(
     weights: tuple[Array, ...],
     biases: tuple[Array, ...],
@@ -309,9 +348,7 @@ def _forward_mlp(
     for i in range(n_layers - 1):
         x = weights[i] @ x + biases[i]
         if use_layer_norm:
-            mean = jnp.mean(x)
-            var = jnp.var(x)
-            x = (x - mean) / jnp.sqrt(var + 1e-5)
+            x = _finite_layer_norm(x)
         x = jnp.where(x >= 0, x, leaky_relu_slope * x)
     # Output layer (no activation)
     x = weights[-1] @ x + biases[-1]
