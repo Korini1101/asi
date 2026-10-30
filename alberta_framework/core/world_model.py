@@ -94,6 +94,17 @@ def _validated_step_size(name: str, value: object) -> float:
     return stored
 
 
+def _finite_nanmean_square(values: Array) -> Array:
+    """Keep a representable NaN-masked mean square across reduction overflow."""
+    direct = jnp.nanmean(values * values)
+    scale = jnp.max(jnp.where(jnp.isnan(values), 0.0, jnp.abs(values)))
+    safe_scale = jnp.where(scale > 0.0, scale, jnp.ones_like(scale))
+    normalized = values / safe_scale
+    stable = scale * (scale * jnp.nanmean(normalized * normalized))
+    reduction_only_overflow = jnp.isinf(direct) & jnp.all(~jnp.isinf(values))
+    return jnp.where(reduction_only_overflow, stable, direct)
+
+
 def _validate_hidden_sizes(value: object) -> tuple[int, ...]:
     if type(value) is not tuple:
         raise ValueError("hidden_sizes must be an actual tuple")
@@ -1569,8 +1580,8 @@ class OneStepWorldModel:
         reward_arr = reward
         next_observation_errors = prediction.next_observation - next_obs
         reward_error = prediction.reward - reward_arr
-        observation_mse = jnp.nanmean(next_observation_errors**2)
-        prediction_error = jnp.nanmean(learner_result.errors**2)
+        observation_mse = _finite_nanmean_square(next_observation_errors)
+        prediction_error = _finite_nanmean_square(learner_result.errors)
         candidate_state = WorldModelState(
             learner_state=learner_result.state,
             step_count=_saturating_increment(state.step_count),
