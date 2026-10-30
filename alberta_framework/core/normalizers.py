@@ -1125,6 +1125,10 @@ def normalizer_from_config(config: dict[str, Any]) -> Normalizer[Any]:
     elif estimator_schema is not None:
         raise ValueError(f"estimator_schema is not valid for normalizer type '{host_type_name}'")
     elif host_type_name == "EMANormalizer":
+        # Convert once: the semantics check and the constructor must see the
+        # same validated value.
+        if "decay" in config:
+            config["decay"] = _validated_finite_real("decay", config["decay"])
         if _stored_float32_equals_one(config.get("decay", 0.99)):
             expected_semantics = EMA_PRIOR_CUMULATIVE_FLOAT32_ESTIMATOR_SEMANTICS
             legacy_estimator_semantics = CUMULATIVE_FLOAT32_ESTIMATOR_SEMANTICS
@@ -1132,6 +1136,8 @@ def normalizer_from_config(config: dict[str, Any]) -> Normalizer[Any]:
             expected_semantics = EMA_PRIOR_BOUNDED_RECENCY_ESTIMATOR_SEMANTICS
             legacy_estimator_semantics = BOUNDED_RECENCY_ESTIMATOR_SEMANTICS
     elif host_type_name == "StreamingBatchNormalizer":
+        if "momentum" in config:
+            config["momentum"] = _validated_finite_real("momentum", config["momentum"])
         expected_semantics = (
             STATIC_AFTER_FIRST_ESTIMATOR_SEMANTICS
             if _stored_float32_equals_one(config.get("momentum", 0.99))
