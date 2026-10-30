@@ -2164,6 +2164,27 @@ def test_all_horde_actor_critic_counters_saturate_and_rollback(
     assert int(final_state.step_count) == 2**31 - 1
 
 
+@pytest.mark.parametrize(
+    "factory",
+    [
+        pytest.param(_linear_value_counter_case, id="linear-value"),
+        pytest.param(_linear_q_counter_case, id="linear-q"),
+        pytest.param(_nonlinear_value_counter_case, id="nonlinear-value"),
+        pytest.param(_nonlinear_q_counter_case, id="nonlinear-q"),
+    ],
+)
+def test_all_horde_actor_critic_updates_reject_negative_lifetime_counters(
+    factory: Callable[[], tuple[Any, CounterUpdate]],
+) -> None:
+    state, update = factory()
+    corrupted = state.replace(step_count=jnp.asarray(-1, dtype=jnp.int32))
+
+    for apply_update in (update, jax.jit(update)):
+        result = apply_update(corrupted, jnp.asarray(1.0, dtype=jnp.float32))
+        assert not bool(result.update_applied)
+        _assert_state_unchanged(result.state, corrupted)
+
+
 def test_array_runner_policies_align_with_actions() -> None:
     critic = HordeLearner(
         create_horde_spec(

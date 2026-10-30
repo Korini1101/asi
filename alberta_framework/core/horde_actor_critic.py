@@ -814,7 +814,8 @@ class QHordeActorCriticAgent:
             rng_key=key,
         )
         inputs_valid = (
-            action_valid
+            (state.step_count >= 0)
+            & action_valid
             & jnp.isfinite(jnp.squeeze(reward))
             & jnp.all(jnp.isfinite(observation))
             & jnp.all(jnp.isfinite(old_policy))
@@ -1135,7 +1136,8 @@ class HordeActorCriticAgent:
             rng_key=key,
         )
         inputs_valid = (
-            action_valid
+            (state.step_count >= 0)
+            & action_valid
             & jnp.isfinite(jnp.squeeze(reward))
             & jnp.all(jnp.isfinite(observation))
             & jnp.isfinite(value_discount)
@@ -2073,7 +2075,8 @@ class NonlinearHordeActorCriticAgent:
             rng_key=key,
         )
         inputs_valid = (
-            action_valid
+            (state.step_count >= 0)
+            & action_valid
             & jnp.isfinite(jnp.squeeze(reward))
             & jnp.all(jnp.isfinite(observation))
             & jnp.isfinite(value_discount)
@@ -2759,7 +2762,8 @@ class NonlinearQHordeActorCriticAgent:
             rng_key=key,
         )
         inputs_valid = (
-            action_valid
+            (state.step_count >= 0)
+            & action_valid
             & jnp.isfinite(jnp.squeeze(reward))
             & jnp.all(jnp.isfinite(observation))
             & jnp.all(jnp.isfinite(next_policy))
