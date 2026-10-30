@@ -2205,7 +2205,7 @@ class FixedBudgetInteractionLearner:
         feature_dim = observation.shape[0]
         key_kind, key_random, key_parent, key_mutate = jr.split(key, 4)
         mix = jnp.array(self._generator_mix, dtype=jnp.float32)
-        generator = jr.categorical(key_kind, jnp.log(mix + 1e-8))
+        generator = jr.categorical(key_kind, jnp.log(mix))
         live_parent = self._live_descriptor_mask(
             active_left,
             active_right,
