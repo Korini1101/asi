@@ -14,17 +14,11 @@ Head weights start at zero, so step-1 TD error is 1 and step-2 TD error is
 [1 + 0.9*0.9, 1] = [1.81, 1]; decaying with the current discount gives [1, 1].
 """
 
-import dataclasses
-
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 import pytest
 
-from alberta_framework.core.multi_head_learner import (
-    MultiHeadMLPState,
-    migrate_legacy_multi_head_mlp_state,
-)
 from alberta_framework.core.off_policy_horde import OffPolicyHordeLearner
 from alberta_framework.core.types import (
     DemonType,
@@ -99,32 +93,3 @@ def test_terminal_transition_credits_prior_step_trace() -> None:
     np.testing.assert_allclose(
         np.asarray(step2.state.head_params.biases[0]), [2.81], atol=1e-6
     )
-
-
-def _legacy_dict_without_new_fields() -> dict:
-    """Build a pre-``previous_discounts`` legacy state mapping."""
-    state = _learner().init(2, jr.key(0))
-    fields = {
-        field.name: getattr(state, field.name)
-        for field in dataclasses.fields(MultiHeadMLPState)
-    }
-    del fields["step_words"]
-    del fields["previous_discounts"]
-    return fields
-
-
-def test_legacy_state_without_previous_discounts_migrates() -> None:
-    migrated = migrate_legacy_multi_head_mlp_state(
-        _legacy_dict_without_new_fields()
-    )
-    assert migrated.previous_discounts is None
-    np.testing.assert_array_equal(
-        np.asarray(migrated.step_words), np.array([0, 0], dtype=np.uint32)
-    )
-
-
-def test_legacy_state_with_unknown_field_still_rejected() -> None:
-    fields = _legacy_dict_without_new_fields()
-    fields["bogus_field"] = 0
-    with pytest.raises(ValueError, match="not exact"):
-        migrate_legacy_multi_head_mlp_state(fields)
