@@ -456,6 +456,14 @@ class TestScaledStreamWrapper:
             with pytest.raises(ValueError, match="finite"):
                 ScaledStreamWrapper(inner, feature_scales=scales)
 
+    def test_rejects_complex_scales_before_discarding_imaginary_components(self):
+        """A declared complex scale must not run as its real projection."""
+        inner = RandomWalkStream(feature_dim=2)
+        scales = jnp.asarray([1.0 + 8.0j, 2.0 - 3.0j], dtype=jnp.complex64)
+
+        with pytest.raises(ValueError, match="real"):
+            ScaledStreamWrapper(inner, feature_scales=scales)
+
     def test_works_with_different_streams(self, rng_key):
         """Should work with any stream implementing the protocol."""
         scales = jnp.array([0.01, 0.1, 1.0, 10.0, 100.0])
