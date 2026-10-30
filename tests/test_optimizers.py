@@ -955,6 +955,19 @@ class TestAdaptiveObGDBounding:
         chex.assert_trees_all_close(bounded[0], steps[0] / rms)
         chex.assert_trees_all_close(bounded[1], steps[1] / rms)
 
+    def test_large_finite_rms_stage_does_not_collapse(self):
+        bounder = AdaptiveObGDBounding(kappa=0.0, eps=0.0)
+        steps = (jnp.full((8,), 7e18, dtype=jnp.float32),)
+
+        bounded, scale = bounder.bound(
+            steps,
+            jnp.asarray(1.0, dtype=jnp.float32),
+            (jnp.zeros((8,), dtype=jnp.float32),),
+        )
+
+        assert float(scale) == 1.0
+        np.testing.assert_allclose(bounded[0], jnp.ones((8,)), rtol=1e-6)
+
     def test_produces_finite_zero_steps(self):
         """Zero steps should remain finite and unchanged."""
         bounder = AdaptiveObGDBounding()
