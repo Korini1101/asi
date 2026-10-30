@@ -157,6 +157,28 @@ def _exact_config_payload(config: object, expected: frozenset[str]) -> dict[str,
     return cast(dict[str, Any], dict(payload))
 
 
+def _exact_construction_payload(
+    config: object,
+    *,
+    expected_type: str,
+    expected_fields: frozenset[str],
+) -> dict[str, Any]:
+    """Require the complete outer identity of one serialized agent."""
+
+    try:
+        payload = _exact_config_payload(config, expected_fields | {"type"})
+    except ValueError as error:
+        raise ValueError(
+            f"{expected_type} construction fields do not match the serialized schema"
+        ) from error
+    marker = payload.pop("type")
+    if type(marker) is not str or marker != expected_type:
+        raise ValueError(
+            f"{expected_type} construction fields do not match the serialized schema"
+        )
+    return payload
+
+
 def _check_actor_resources(resources: dict[str, int]) -> dict[str, int]:
     for name, value in resources.items():
         if value > _INT32_MAX:
@@ -203,11 +225,13 @@ def _require_horde_ac_matching_length(name: str, value: object, *, expected: int
         raise ValueError(f"{name} must share the same leading length as rewards")
 
 
-def _linear_actor_resources(n_actions: int, feature_dim: object) -> dict[str, int]:
+def _linear_actor_resources(
+    n_actions: int, feature_dim: object, *, discount_history: bool = False
+) -> dict[str, int]:
     width = _require_int32("feature_dim", feature_dim, minimum=1)
     parameters = n_actions * (width + 1)
-    # ``+ 1`` counts the ``previous_discount`` float32 scalar carried in state.
-    float32_state = 2 * parameters + width + 1
+    # Optionally count the ``previous_discount`` float32 scalar carried in state.
+    float32_state = 2 * parameters + width + int(discount_history)
     logical_state = float32_state + 4
     return _check_actor_resources(
         {
@@ -236,7 +260,7 @@ def _nonlinear_actor_resources(
     _check_actor_resources({"head_product": head_product})
     parameters += head_product + n_actions
     tensor_count = 2 * (len(hidden_sizes) + 1)
-    float32_state = 5 * parameters + 2 * tensor_count + 1 + width
+    float32_state = 5 * parameters + 2 * tensor_count + 2 + width
     logical_state = float32_state + 4
     return _check_actor_resources(
         {
@@ -374,11 +398,11 @@ class HordeActorCriticConfig:
         object.__setattr__(self, "actor_lamda", actor_lamda)
         object.__setattr__(self, "temperature", temperature)
         object.__setattr__(self, "actor_td_error_clip", actor_td_error_clip)
-        _linear_actor_resources(self.n_actions, 1)
+        _linear_actor_resources(self.n_actions, 1, discount_history=True)
 
     def actor_resource_budget(self, feature_dim: object) -> dict[str, int]:
         """Return the exact actor-only state budget for an input width."""
-        return _linear_actor_resources(self.n_actions, feature_dim)
+        return _linear_actor_resources(self.n_actions, feature_dim, discount_history=True)
 
     def to_config(self) -> dict[str, Any]:
         """Serialize this configuration to a dictionary."""
@@ -400,6 +424,7 @@ class HordeActorCriticState:
         actor_bias: Policy bias vector, shape ``(n_actions,)``.
         actor_trace_weights: Eligibility trace for actor weights.
         actor_trace_bias: Eligibility trace for actor bias.
+        previous_discount: Last accepted value transition discount for actor eligibility.
         critic_state: Underlying Horde learner state.
         last_observation: Previous observation ``s_t``.
         last_action: Previous action ``a_t``.
@@ -416,6 +441,7 @@ class HordeActorCriticState:
     actor_bias: Float[Array, " n_actions"]
     actor_trace_weights: Float[Array, "n_actions feature_dim"]
     actor_trace_bias: Float[Array, " n_actions"]
+    previous_discount: Float[Array, ""]
     critic_state: MultiHeadMLPState
     last_observation: Float[Array, " feature_dim"]
     last_action: Int[Array, ""]
@@ -647,13 +673,16 @@ class QHordeActorCriticAgent:
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> QHordeActorCriticAgent:
         """Reconstruct a ``QHordeActorCriticAgent`` from a dictionary."""
-        config = dict(config)
-        config.pop("type", None)
+        payload = _exact_construction_payload(
+            config,
+            expected_type="QHordeActorCriticAgent",
+            expected_fields=frozenset({"config", "critic", "actor_bounder"}),
+        )
         return cls(
-            config=QHordeActorCriticConfig.from_config(config["config"]),
-            critic=HordeLearner.from_config(config["critic"]),
-            actor_bounder=bounder_from_config(config["actor_bounder"])
-            if config.get("actor_bounder") is not None
+            config=QHordeActorCriticConfig.from_config(payload["config"]),
+            critic=HordeLearner.from_config(payload["critic"]),
+            actor_bounder=bounder_from_config(payload["actor_bounder"])
+            if payload["actor_bounder"] is not None
             else None,
         )
 
@@ -848,7 +877,8 @@ class QHordeActorCriticAgent:
             rng_key=key,
         )
         inputs_valid = (
-            action_valid
+            (state.step_count >= 0)
+            & action_valid
             & jnp.isfinite(jnp.squeeze(reward))
             & jnp.all(jnp.isfinite(observation))
             & jnp.all(jnp.isfinite(old_policy))
@@ -963,13 +993,16 @@ class HordeActorCriticAgent:
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> HordeActorCriticAgent:
         """Reconstruct a ``HordeActorCriticAgent`` from a dictionary."""
-        config = dict(config)
-        config.pop("type", None)
+        payload = _exact_construction_payload(
+            config,
+            expected_type="HordeActorCriticAgent",
+            expected_fields=frozenset({"config", "critic", "actor_bounder"}),
+        )
         return cls(
-            config=HordeActorCriticConfig.from_config(config["config"]),
-            critic=HordeLearner.from_config(config["critic"]),
-            actor_bounder=bounder_from_config(config["actor_bounder"])
-            if config.get("actor_bounder") is not None
+            config=HordeActorCriticConfig.from_config(payload["config"]),
+            critic=HordeLearner.from_config(payload["critic"]),
+            actor_bounder=bounder_from_config(payload["actor_bounder"])
+            if payload["actor_bounder"] is not None
             else None,
         )
 
@@ -1092,6 +1125,8 @@ class HordeActorCriticAgent:
         Returns:
             ``HordeActorCriticUpdateResult`` with actor and critic metrics.
         """
+        if state.previous_discount.shape != () or state.previous_discount.dtype != jnp.float32:
+            raise ValueError("state.previous_discount must be a scalar float32")
         cfg = self._config
         prev_obs = state.last_observation
         action_valid = (state.last_action >= 0) & (state.last_action < cfg.n_actions)
@@ -1142,13 +1177,8 @@ class HordeActorCriticAgent:
         one_hot = jax.nn.one_hot(safe_last_action, cfg.n_actions, dtype=jnp.float32)
         actor_grad_bias = (one_hot - old_policy) / cfg.temperature
         actor_grad_weights = actor_grad_bias[:, None] * prev_obs[None, :]
-        # Eligibility traces decay with the incoming discount: the discount of
-        # the prior accepted transition into the current state's observation.
-        # The current call's discount only controls the TD bootstrap. Decaying
-        # with the outgoing discount would wipe the episode trace at a
-        # terminal transition (discount 0) before the terminal TD error
-        # credits it, so the terminal reward would reach only the final
-        # step's gradient instead of the completed episode.
+        # Incoming gamma_t retains earlier credit; outgoing gamma_{t+1}
+        # controls bootstrapping and clears traces only after reward learning.
         actor_decay = state.previous_discount * cfg.actor_lamda
         actor_trace_weights = (
             _skip_zero_scale(actor_decay, state.actor_trace_weights) + actor_grad_weights
@@ -1177,9 +1207,9 @@ class HordeActorCriticAgent:
             actor_trace_bias=jnp.where(
                 carry_traces, actor_trace_bias, jnp.zeros_like(actor_trace_bias)
             ),
+            previous_discount=value_discount,
             critic_state=critic_result.state,
             step_count=_saturating_int32_counter_increment(state.step_count),
-            previous_discount=value_discount,
         )
         next_action, key, next_policy = self.select_action(updated, observation)
         proposed_state = updated.replace(
@@ -1188,12 +1218,15 @@ class HordeActorCriticAgent:
             rng_key=key,
         )
         inputs_valid = (
-            action_valid
+            (state.step_count >= 0)
+            & action_valid
             & jnp.isfinite(jnp.squeeze(reward))
             & jnp.all(jnp.isfinite(observation))
             & jnp.isfinite(value_discount)
             & (value_discount >= 0.0)
             & (value_discount <= 1.0)
+            & (state.previous_discount >= 0.0)
+            & (state.previous_discount <= 1.0)
             & jnp.all(jnp.isfinite(old_policy))
             & jnp.isfinite(value)
             & ((value_discount == 0.0) | jnp.isfinite(next_value))
@@ -1458,12 +1491,51 @@ def _clip_nlhac_actor_grads(
     for grad in (*grad_trunk_w, *grad_trunk_b):
         squared_norm = squared_norm + jnp.sum(jnp.square(grad))
     norm = jnp.sqrt(squared_norm)
+    # Recover squared-sum overflow of finite gradients by scaling before squaring.
+    grads = (grad_head_w, grad_head_b, *grad_trunk_w, *grad_trunk_b)
+    finite = jnp.all(jnp.stack([jnp.all(jnp.isfinite(grad)) for grad in grads]))
+    largest = jnp.max(jnp.stack([jnp.max(jnp.abs(grad), initial=0.0) for grad in grads]))
+    safe_largest = jnp.where(largest > 0.0, largest, 1.0)
+    _, scale_exponent = jnp.frexp(safe_largest)
+    rescaled = jnp.sum(
+        jnp.stack(
+            [
+                jnp.sum(jnp.square(jnp.ldexp(grad, -scale_exponent)))
+                for grad in grads
+            ]
+        )
+    )
+    recover = jnp.isinf(norm) & finite
+    scaled_norm = jnp.sqrt(rescaled)
     scale = jnp.minimum(1.0, jnp.asarray(max_norm, dtype=jnp.float32) / (norm + 1e-8))
+    scaled_scale = jnp.asarray(max_norm, dtype=jnp.float32) / (scaled_norm + 1e-8)
     return (
-        tuple(scale * grad for grad in grad_trunk_w),
-        tuple(scale * grad for grad in grad_trunk_b),
-        scale * grad_head_w,
-        scale * grad_head_b,
+        tuple(
+            jnp.where(
+                recover,
+                scaled_scale * jnp.ldexp(grad, -scale_exponent),
+                scale * grad,
+            )
+            for grad in grad_trunk_w
+        ),
+        tuple(
+            jnp.where(
+                recover,
+                scaled_scale * jnp.ldexp(grad, -scale_exponent),
+                scale * grad,
+            )
+            for grad in grad_trunk_b
+        ),
+        jnp.where(
+            recover,
+            scaled_scale * jnp.ldexp(grad_head_w, -scale_exponent),
+            scale * grad_head_w,
+        ),
+        jnp.where(
+            recover,
+            scaled_scale * jnp.ldexp(grad_head_b, -scale_exponent),
+            scale * grad_head_b,
+        ),
     )
 
 
@@ -1614,6 +1686,8 @@ class NonlinearHordeActorCriticState:
         actor_head_opt_b: Optimizer state for ``actor_head_b``.
         actor_td_error_normalizer: EMA scale for actor-only TD-error
             normalization.
+        previous_discount: Last accepted value transition discount for actor
+            eligibility. The shared nonlinear Q actor leaves this field unused.
         critic_state: Underlying Horde learner state.
         last_observation: Previous observation for the next update call.
         last_action: Previous action index.
@@ -1631,6 +1705,7 @@ class NonlinearHordeActorCriticState:
     actor_head_opt_w: AutostepParamState
     actor_head_opt_b: AutostepParamState
     actor_td_error_normalizer: Float[Array, ""]
+    previous_discount: Float[Array, ""]
     critic_state: MultiHeadMLPState
     last_observation: Float[Array, " feature_dim"]
     last_action: Int[Array, ""]
@@ -1768,18 +1843,23 @@ class NonlinearHordeActorCriticAgent:
     @classmethod
     def from_config(cls, cfg: dict[str, Any]) -> NonlinearHordeActorCriticAgent:
         """Reconstruct from :meth:`to_config` output."""
-        cfg = dict(cfg)
-        cfg.pop("type", None)
+        payload = _exact_construction_payload(
+            cfg,
+            expected_type="NonlinearHordeActorCriticAgent",
+            expected_fields=frozenset(
+                {"config", "critic", "actor_optimizer", "actor_bounder"}
+            ),
+        )
         actor_opt: Autostep | None = None
-        actor_optimizer_cfg = cfg.get("actor_optimizer")
+        actor_optimizer_cfg = payload["actor_optimizer"]
         if actor_optimizer_cfg is not None:
             actor_opt = cast(Autostep, optimizer_from_config(actor_optimizer_cfg))
         return cls(
-            config=NonlinearHordeActorCriticConfig.from_config(cfg["config"]),
-            critic=HordeLearner.from_config(cfg["critic"]),
+            config=NonlinearHordeActorCriticConfig.from_config(payload["config"]),
+            critic=HordeLearner.from_config(payload["critic"]),
             actor_optimizer=actor_opt,
-            actor_bounder=bounder_from_config(cfg["actor_bounder"])
-            if cfg.get("actor_bounder") is not None
+            actor_bounder=bounder_from_config(payload["actor_bounder"])
+            if payload["actor_bounder"] is not None
             else None,
         )
 
@@ -1830,6 +1910,7 @@ class NonlinearHordeActorCriticAgent:
             actor_head_opt_w=self._actor_optimizer.init_for_shape(actor_head_w.shape),
             actor_head_opt_b=self._actor_optimizer.init_for_shape(actor_head_b.shape),
             actor_td_error_normalizer=jnp.array(0.0, dtype=jnp.float32),
+            previous_discount=jnp.array(1.0, dtype=jnp.float32),
             critic_state=self._critic.init(feature_dim, critic_key),
             last_observation=jnp.zeros((feature_dim,), dtype=jnp.float32),
             last_action=jnp.array(-1, dtype=jnp.int32),
@@ -1915,11 +1996,15 @@ class NonlinearHordeActorCriticAgent:
             reward: Scalar reward for the value head.
             observation: Next observation.
             auxiliary_cumulants: Optional cumulants for non-value heads.
-            discount: Optional per-transition value-head discount.
+            discount: Optional outgoing value-head discount, saved for the
+                next accepted actor update; prior eligibility uses the last
+                accepted transition discount.
 
         Returns:
             :class:`NonlinearHordeActorCriticUpdateResult`.
         """
+        if state.previous_discount.shape != () or state.previous_discount.dtype != jnp.float32:
+            raise ValueError("state.previous_discount must be a scalar float32")
         cfg = self._config
         prev_obs = state.last_observation
         action_valid = (state.last_action >= 0) & (state.last_action < cfg.n_actions)
@@ -1998,7 +2083,9 @@ class NonlinearHordeActorCriticAgent:
             cfg.actor_gradient_clip_norm,
         )
 
-        actor_decay = value_discount * cfg.actor_lamda
+        # Incoming gamma_t retains earlier credit; outgoing gamma_{t+1}
+        # controls bootstrapping and clears traces only after reward learning.
+        actor_decay = state.previous_discount * cfg.actor_lamda
         n_hidden = len(cfg.hidden_sizes)
 
         new_trunk_traces: list[Array] = []
@@ -2116,6 +2203,7 @@ class NonlinearHordeActorCriticAgent:
             actor_head_opt_w=new_head_opt_w,
             actor_head_opt_b=new_head_opt_b,
             actor_td_error_normalizer=actor_td_error_normalizer,
+            previous_discount=value_discount,
             critic_state=critic_result.state,
             step_count=_saturating_int32_counter_increment(state.step_count),
         )
@@ -2126,12 +2214,15 @@ class NonlinearHordeActorCriticAgent:
             rng_key=key,
         )
         inputs_valid = (
-            action_valid
+            (state.step_count >= 0)
+            & action_valid
             & jnp.isfinite(jnp.squeeze(reward))
             & jnp.all(jnp.isfinite(observation))
             & jnp.isfinite(value_discount)
             & (value_discount >= 0.0)
             & (value_discount <= 1.0)
+            & (state.previous_discount >= 0.0)
+            & (state.previous_discount <= 1.0)
             & jnp.isfinite(value)
             & ((value_discount == 0.0) | jnp.isfinite(next_value))
             & jnp.isfinite(td_error)
@@ -2481,10 +2572,15 @@ class NonlinearQHordeActorCriticAgent:
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> NonlinearQHordeActorCriticAgent:
         """Reconstruct from :meth:`to_config` output."""
-        payload = dict(config)
-        payload.pop("type", None)
+        payload = _exact_construction_payload(
+            config,
+            expected_type="NonlinearQHordeActorCriticAgent",
+            expected_fields=frozenset(
+                {"config", "critic", "actor_optimizer", "actor_bounder"}
+            ),
+        )
         actor_opt: Autostep | None = None
-        actor_optimizer_cfg = payload.get("actor_optimizer")
+        actor_optimizer_cfg = payload["actor_optimizer"]
         if actor_optimizer_cfg is not None:
             actor_opt = cast(Autostep, optimizer_from_config(actor_optimizer_cfg))
         return cls(
@@ -2492,7 +2588,7 @@ class NonlinearQHordeActorCriticAgent:
             critic=HordeLearner.from_config(payload["critic"]),
             actor_optimizer=actor_opt,
             actor_bounder=bounder_from_config(payload["actor_bounder"])
-            if payload.get("actor_bounder") is not None
+            if payload["actor_bounder"] is not None
             else None,
         )
 
@@ -2541,6 +2637,7 @@ class NonlinearQHordeActorCriticAgent:
             actor_head_opt_w=self._actor_optimizer.init_for_shape(actor_head_w.shape),
             actor_head_opt_b=self._actor_optimizer.init_for_shape(actor_head_b.shape),
             actor_td_error_normalizer=jnp.array(0.0, dtype=jnp.float32),
+            previous_discount=jnp.array(1.0, dtype=jnp.float32),
             critic_state=self._critic.init(feature_dim, critic_key),
             last_observation=jnp.zeros((feature_dim,), dtype=jnp.float32),
             last_action=jnp.array(-1, dtype=jnp.int32),
@@ -2695,7 +2792,8 @@ class NonlinearQHordeActorCriticAgent:
             cfg.actor_gradient_clip_norm,
         )
 
-        actor_decay = effective_gamma * cfg.actor_lamda
+        # Credit retained within-episode eligibility before clearing terminal traces.
+        actor_decay = jnp.asarray(cfg.gamma, dtype=jnp.float32) * cfg.actor_lamda
         n_hidden = len(cfg.hidden_sizes)
         new_trunk_traces: list[Array] = []
         for i in range(n_hidden):
@@ -2812,7 +2910,8 @@ class NonlinearQHordeActorCriticAgent:
             rng_key=key,
         )
         inputs_valid = (
-            action_valid
+            (state.step_count >= 0)
+            & action_valid
             & jnp.isfinite(jnp.squeeze(reward))
             & jnp.all(jnp.isfinite(observation))
             & jnp.all(jnp.isfinite(next_policy))
