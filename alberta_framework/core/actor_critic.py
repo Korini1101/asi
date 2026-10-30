@@ -313,6 +313,13 @@ def _require_concrete_finite(name: str, array: Array) -> Array:
     return array
 
 
+def _require_concrete_finite_tree(name: str, tree: object) -> None:
+    """Reject a non-finite result tree at an eager public boundary."""
+    valid = _floating_tree_is_finite(tree)
+    if not isinstance(valid, jax.core.Tracer) and not bool(valid):
+        raise ValueError(f"{name} must contain only finite values")
+
+
 def _checked_terminated(name: str, value: object) -> Array:
     """Validate a ``terminated`` flag array dtype before boolean coercion."""
     actual_type = type(value)
@@ -746,15 +753,18 @@ class ActorCriticAgent:
     ) -> tuple[ActorCriticState, Int[Array, ""], Float[Array, " n_actions"]]:
         """Select and store the first action for a new stream or episode.
 
-        The observation is validated eagerly at this state-committing
-        boundary: a non-finite value would otherwise be stored in
-        ``last_observation`` and reject every later update with the state
-        bitwise frozen. Traced inputs pass through to the runtime gates.
+        The observation and completed transaction are validated eagerly at
+        this state-committing boundary: a non-finite input would poison
+        ``last_observation``, while finite inputs can still overflow policy
+        arithmetic and publish a non-finite distribution. Traced values pass
+        through to the update-side runtime gates.
         """
         observation = _require_concrete_finite(
             "observation", self._observation(state, observation)
         )
-        return self._start(state, observation)  # type: ignore[no-any-return]
+        result = self._start(state, observation)
+        _require_concrete_finite_tree("actor-critic start result", result)
+        return result  # type: ignore[no-any-return]
 
     @functools.partial(jax.jit, static_argnums=(0,))
     def _start(
@@ -1612,16 +1622,18 @@ class ContinuousActorCriticAgent:
     ]:
         """Select and store the first action for a new stream or episode.
 
-        The observation is validated eagerly at this state-committing
-        boundary, matching the discrete agent's start contract: a non-finite
-        value would otherwise be stored in ``last_observation`` and reject
-        every later update with the state bitwise frozen. Traced inputs pass
-        through to the runtime gates.
+        The observation and completed transaction are validated eagerly at
+        this state-committing boundary, matching the discrete agent's start
+        contract: finite inputs can still overflow the Gaussian mean and hide
+        a non-finite raw sample behind a clipped action. Traced values pass
+        through to the update-side runtime gates.
         """
         observation = _require_concrete_finite(
             "observation", self._observation(state, observation)
         )
-        return self._start(state, observation)  # type: ignore[no-any-return]
+        result = self._start(state, observation)
+        _require_concrete_finite_tree("continuous actor-critic start result", result)
+        return result  # type: ignore[no-any-return]
 
     @functools.partial(jax.jit, static_argnums=(0,))
     def _start(
