@@ -941,6 +941,45 @@ class TestInfiniteRewardDoesNotPoisonWeights:
         chex.assert_tree_all_finite(recovered.state.weights)
         assert bool(recovered.update_applied)
 
+    def test_etd_terminal_step_clears_stored_traces(self) -> None:
+        learner = ETDLinearLearner(step_size=0.05, trace_decay=0.5)
+        zero = jnp.zeros(2, dtype=jnp.float32)
+        fresh = learner.update(
+            learner.init(2),
+            jnp.array([0.0, 1.0], dtype=jnp.float32),
+            jnp.array(0.0, dtype=jnp.float32),
+            zero,
+            jnp.array(0.9, dtype=jnp.float32),
+            jnp.array(1.0, dtype=jnp.float32),
+            jnp.array(1.0, dtype=jnp.float32),
+        )
+        terminal = learner.update(
+            learner.init(2),
+            jnp.array([1.0, 0.0], dtype=jnp.float32),
+            jnp.array(0.0, dtype=jnp.float32),
+            zero,
+            jnp.array(0.0, dtype=jnp.float32),
+            jnp.array(1.0, dtype=jnp.float32),
+            jnp.array(1.0, dtype=jnp.float32),
+        )
+        chex.assert_trees_all_close(terminal.state.eligibility_traces, zero)
+        assert float(terminal.state.follow_on_trace) == 0.0
+        post_terminal = learner.update(
+            terminal.state,
+            jnp.array([0.0, 1.0], dtype=jnp.float32),
+            jnp.array(0.0, dtype=jnp.float32),
+            zero,
+            jnp.array(0.9, dtype=jnp.float32),
+            jnp.array(1.0, dtype=jnp.float32),
+            jnp.array(1.0, dtype=jnp.float32),
+        )
+        chex.assert_trees_all_close(
+            post_terminal.state.eligibility_traces, fresh.state.eligibility_traces
+        )
+        chex.assert_trees_all_close(
+            post_terminal.state.follow_on_trace, fresh.state.follow_on_trace
+        )
+
     def test_gradient_td(self) -> None:
         learner = GradientTDLinearLearner(step_size=0.1)
         state = learner.init(2)

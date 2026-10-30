@@ -867,12 +867,13 @@ class ETDLinearLearner:
         new_e = _skip_zero_scale(rho_s, eligibility_core)
         new_e_b = _skip_zero_scale(rho_s, bias_core)
 
+        terminal = gamma_s == jnp.asarray(0.0, dtype=jnp.float32)
         proposed_state = ETDState(  # type: ignore[call-arg]
             weights=state.weights + alpha * td_error * new_e,
             bias=state.bias + alpha * td_error * new_e_b,
-            eligibility_traces=new_e,
-            bias_eligibility_trace=new_e_b,
-            follow_on_trace=follow_on,
+            eligibility_traces=jnp.where(terminal, jnp.zeros_like(new_e), new_e),
+            bias_eligibility_trace=jnp.where(terminal, jnp.zeros_like(new_e_b), new_e_b),
+            follow_on_trace=jnp.where(terminal, jnp.zeros_like(follow_on), follow_on),
             emphasis=emphasis,
             previous_rho=rho_s,
             previous_gamma=gamma_s,
