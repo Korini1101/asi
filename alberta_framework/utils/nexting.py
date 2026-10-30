@@ -99,11 +99,7 @@ def _require_leading_length(
     ndim: int,
     maximum: int,
 ) -> None:
-    if isinstance(value, jax.core.Tracer):
-        if value.ndim != ndim:
-            raise ValueError(f"{name} must be {ndim}-dimensional")
-        return
-    if isinstance(value, jax.Array):
+    if isinstance(value, (jax.core.Tracer, jax.Array)):
         if value.ndim != ndim:
             raise ValueError(f"{name} must be {ndim}-dimensional")
         length = int(value.shape[0])
@@ -235,27 +231,19 @@ def multi_channel_horizon_returns(
     _require_leading_length(
         "cumulants", cumulants, ndim=2, maximum=_NEXTING_MAX_STEPS
     )
-    if isinstance(cumulants, jax.core.Tracer):
-        if cumulants.ndim != 2:
-            raise ValueError("cumulants must be 2-dimensional")
-    elif isinstance(cumulants, jax.Array):
+    if isinstance(cumulants, (jax.core.Tracer, jax.Array)):
         if cumulants.ndim != 2:
             raise ValueError("cumulants must be 2-dimensional")
         channel_count = int(cumulants.shape[1])
-        if channel_count < 1 or channel_count > _NEXTING_MAX_CHANNELS:
-            raise ValueError(
-                "cumulants channel count must be an integer in "
-                f"[1, {_NEXTING_MAX_CHANNELS}]"
-            )
     else:
         array = _concrete_numeric_array("cumulants", cumulants, ndim=2)
         if array is not None:
             channel_count = int(array.shape[1])
-            if channel_count < 1 or channel_count > _NEXTING_MAX_CHANNELS:
-                raise ValueError(
-                    "cumulants channel count must be an integer in "
-                    f"[1, {_NEXTING_MAX_CHANNELS}]"
-                )
+    if channel_count < 1 or channel_count > _NEXTING_MAX_CHANNELS:
+        raise ValueError(
+            "cumulants channel count must be an integer in "
+            f"[1, {_NEXTING_MAX_CHANNELS}]"
+        )
     _require_leading_length("gammas", gammas, ndim=1, maximum=_NEXTING_MAX_HORIZONS)
     # Vmap over channels: for each channel apply multi_horizon_returns
     def per_channel(c_series: Array) -> Array:
