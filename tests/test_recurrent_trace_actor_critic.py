@@ -2219,6 +2219,53 @@ def test_reference_dense_rtu_and_live_sparse_feedforward_initialization() -> Non
     assert jnp.allclose(jnp.mean(jnp.square(normalized)), 1.0, atol=1e-6)
 
 
+@pytest.mark.parametrize("magnitude", [7e37, 1e38, 3e38])
+def test_parameterless_layer_norm_preserves_large_finite_contrast(
+    magnitude: float,
+) -> None:
+    inputs = jnp.asarray(
+        (magnitude,) * 4 + (-magnitude,) * 4,
+        dtype=jnp.float32,
+    )
+
+    normalized = parameterless_layer_norm(inputs, epsilon=1e-8)
+    compiled = jax.jit(parameterless_layer_norm)(inputs, epsilon=1e-8)
+
+    assert bool(jnp.all(jnp.isfinite(normalized)))
+    expected = jnp.asarray((1.0,) * 4 + (-1.0,) * 4, dtype=jnp.float32)
+    np.testing.assert_allclose(normalized, expected, rtol=1e-6)
+    np.testing.assert_allclose(compiled, expected, rtol=1e-6)
+
+
+@pytest.mark.parametrize("epsilon", [1e-5, 1e-8])
+@pytest.mark.parametrize("scale", [1e-22, 1e-25])
+def test_parameterless_layer_norm_preserves_tiny_finite_gradients(
+    epsilon: float,
+    scale: float,
+) -> None:
+    inputs = jnp.asarray((-3.0, -1.0, 2.0, 4.0), dtype=jnp.float32) * scale
+    cotangent = jnp.asarray((0.5, -2.0, 1.5, 3.0), dtype=jnp.float32)
+
+    def weighted_norm(values: Array) -> Array:
+        return jnp.sum(cotangent * parameterless_layer_norm(values, epsilon))
+
+    def direct_weighted_norm(values: Array) -> Array:
+        centered = values - jnp.mean(values, keepdims=True)
+        variance = jnp.mean(jnp.square(centered), keepdims=True)
+        normalized = centered * jax.lax.rsqrt(
+            variance + jnp.asarray(epsilon, values.dtype)
+        )
+        return jnp.sum(cotangent * normalized)
+
+    gradient = jax.grad(weighted_norm)(inputs)
+    compiled_gradient = jax.jit(jax.grad(weighted_norm))(inputs)
+    expected_gradient = jax.grad(direct_weighted_norm)(inputs)
+
+    assert bool(jnp.all(jnp.isfinite(gradient)))
+    np.testing.assert_array_equal(gradient, expected_gradient)
+    np.testing.assert_array_equal(compiled_gradient, expected_gradient)
+
+
 def test_initialized_radii_respect_small_configured_interval() -> None:
     config = RecurrentTraceActorCriticConfig(
         n_actions=2,
