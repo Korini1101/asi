@@ -80,6 +80,17 @@ def _require_int32(name: str, value: object, *, minimum: int, maximum: int = _IN
     return canonical
 
 
+def _root_mean_square(values: Array) -> Array:
+    """Keep a representable RMS finite when only its square reduction overflows."""
+    direct = jnp.sqrt(jnp.mean(values * values))
+    scale = jnp.max(jnp.abs(values))
+    _, scale_exponent = jnp.frexp(scale)
+    normalized = jnp.ldexp(values, -scale_exponent)
+    stable = jnp.ldexp(jnp.sqrt(jnp.mean(normalized * normalized)), scale_exponent)
+    reduction_only_overflow = ~jnp.isfinite(direct) & jnp.all(jnp.isfinite(values))
+    return jnp.where(reduction_only_overflow, stable, direct)
+
+
 # Matches the class of ceiling already established for other scan-driven
 # array-loop runners in ``core`` (e.g. ``sarsa._SARSA_SEQUENCE_MAX_STEPS``,
 # ``learners._LEARNING_LOOP_MAX_STEPS``). Set with headroom above this
@@ -1436,7 +1447,7 @@ class DifferentialGTDLearner:
                 rho_s,
                 new_state.average_reward,
                 jnp.mean(jnp.abs(new_state.eligibility_traces)),
-                jnp.sqrt(jnp.mean(new_state.secondary_weights**2)),
+                _root_mean_square(new_state.secondary_weights),
             ],
             dtype=jnp.float32,
         )
