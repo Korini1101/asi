@@ -343,6 +343,23 @@ def test_resource_budget_matches_initialized_state_arrays_exactly() -> None:
     assert budget.to_dict()["state_nbytes"] == actual_nbytes
 
 
+@pytest.mark.parametrize(
+    "key",
+    (
+        jax.random.key(0, impl="rbg"),
+        jax.random.PRNGKey(0),
+    ),
+    ids=("rbg", "legacy"),
+)
+def test_init_requires_typed_scalar_threefry_key_for_exact_resource_accounting(
+    key: jax.Array,
+) -> None:
+    model = BehaviorModel(BehaviorModelConfig(n_actions=3))
+
+    with pytest.raises(ValueError, match="typed scalar threefry2x32 key"):
+        model.init(feature_dim=5, key=key)
+
+
 def test_preupdate_input_gradient_matches_autodiff_and_does_not_advance_state() -> None:
     model = BehaviorModel(
         BehaviorModelConfig(

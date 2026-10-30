@@ -74,6 +74,24 @@ def _resource_counts(n_actions: int, feature_dim: int) -> tuple[int, int]:
     return trainable, state_nbytes
 
 
+def _require_typed_threefry_key(name: str, value: object) -> Array:
+    """Require the two-word key assumed by the exact resource contract."""
+    if not isinstance(value, jax.Array) or tuple(value.shape) != ():
+        raise ValueError(f"{name} must be a typed scalar threefry2x32 key")
+    try:
+        implementation = str(jr.key_impl(value))
+        words = jr.key_data(value)
+    except Exception as error:
+        raise ValueError(f"{name} must be a typed scalar threefry2x32 key") from error
+    if (
+        implementation != "threefry2x32"
+        or tuple(words.shape) != (2,)
+        or words.dtype != jnp.uint32
+    ):
+        raise ValueError(f"{name} must be a typed scalar threefry2x32 key")
+    return value
+
+
 # float32's finite minimum, used to keep shifted log-probabilities representable
 # when the pairwise logit distance itself exceeds the float32 range (see
 # ``_temperature_scaled_logits``).
@@ -713,6 +731,7 @@ class BehaviorModel:
     def init(self, feature_dim: int, key: Array) -> BehaviorModelState:
         """Initialize parameters and diagnostics."""
         feature_dim = _require_int32("feature_dim", feature_dim, minimum=1)
+        key = _require_typed_threefry_key("key", key)
         _resource_counts(self._config.n_actions, feature_dim)
         _preflight_behavior_model_update_working_set(
             self._config.n_actions,
