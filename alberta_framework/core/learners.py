@@ -134,8 +134,20 @@ def _require_learning_loop_steps(name: str, value: object) -> int:
 def _require_learning_loop_keys(keys: object) -> int:
     if not isinstance(keys, jax.Array):
         raise TypeError("keys must be a JAX array")
-    if keys.ndim not in (1, 2):
-        raise ValueError("keys must have shape (num_seeds,) or (num_seeds, 2)")
+    try:
+        typed = jnp.issubdtype(keys.dtype, jax.dtypes.prng_key)
+        implementation = str(jax.random.key_impl(keys))
+        words = jax.random.key_data(keys)
+    except (AttributeError, TypeError, ValueError) as error:
+        raise TypeError("keys must be typed threefry2x32 JAX PRNG keys") from error
+    if (
+        not typed
+        or implementation != "threefry2x32"
+        or words.dtype != jnp.dtype(jnp.uint32)
+    ):
+        raise TypeError("keys must be typed threefry2x32 JAX PRNG keys")
+    if keys.ndim != 1 or words.shape != (*keys.shape, 2):
+        raise ValueError("keys must have shape (num_seeds,)")
     num_seeds = int(keys.shape[0])
     if num_seeds < 1 or num_seeds > _LEARNING_LOOP_MAX_SEEDS:
         raise ValueError(
@@ -853,7 +865,7 @@ def run_learning_loop_batched[StreamStateT](
         learner: The learner to train
         stream: Experience stream providing (observation, target) pairs
         num_steps: Number of learning steps to run per seed
-        keys: JAX random keys with shape (num_seeds,) or (num_seeds, 2)
+        keys: Typed Threefry JAX random keys with shape (num_seeds,)
         learner_state: Initial state (if None, will be initialized from stream).
             The same initial state is used for all seeds.
         step_size_tracking: Optional config for recording per-weight step-sizes.
@@ -1902,7 +1914,7 @@ def run_mlp_learning_loop_batched[StreamStateT](
         learner: The MLP learner to train
         stream: Experience stream providing (observation, target) pairs
         num_steps: Number of learning steps to run per seed
-        keys: JAX random keys with shape (num_seeds,) or (num_seeds, 2)
+        keys: Typed Threefry JAX random keys with shape (num_seeds,)
         learner_state: Initial state (if None, will be initialized from stream).
             The same initial state is used for all seeds.
         normalizer_tracking: Optional config for recording normalizer state.
