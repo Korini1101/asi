@@ -801,7 +801,10 @@ def _holm_decisions(
     """Return Holm decisions and each record's effective step-down threshold."""
 
     n_tests = len(p_values)
-    sorted_indices = np.argsort(p_values)
+    # Tied p-values have the same decision, but their rank-specific thresholds
+    # are retained in SignificanceResult.alpha. Keep those record identities
+    # deterministic by preserving the caller's order within a tie.
+    sorted_indices = np.argsort(p_values, kind="stable")
     significant = [False] * n_tests
     thresholds = [alpha] * n_tests
     stopped_threshold: float | None = None

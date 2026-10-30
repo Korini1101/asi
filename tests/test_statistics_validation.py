@@ -36,6 +36,7 @@ import pytest
 from alberta_framework.utils.experiments import AggregatedResults
 from alberta_framework.utils.statistics import (
     SignificanceResult,
+    _holm_decisions,
     bonferroni_correction,
     bootstrap_ci,
     cohens_d,
@@ -950,6 +951,15 @@ class TestCorrections:
             False,
             False,
         ]
+
+    def test_holm_ties_keep_source_order_for_record_thresholds(self) -> None:
+        significant, thresholds = _holm_decisions(
+            [0.01, 0.01, 0.0, 0.0],
+            alpha=0.05,
+        )
+
+        assert significant == [True, True, True, True]
+        assert thresholds == pytest.approx([0.05 / 2, 0.05, 0.05 / 4, 0.05 / 3])
 
     def test_holm_strictly_more_powerful_fixture(self) -> None:
         # Bonferroni (alpha/3 = 0.0167) rejects only the first two;
