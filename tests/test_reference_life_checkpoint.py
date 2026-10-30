@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import fcntl
 import hashlib
@@ -91,6 +92,25 @@ def test_checkpoint_validator_rejects_generation_and_zero_event_metric_forgery()
         forged = dataclasses.replace(state, metrics=forged_metrics)
         with pytest.raises(ValueError, match="zero-event phase"):
             runner.validate_checkpoint_state(forged)
+
+
+def test_checkpoint_decoder_requires_disabled_host_timing_policy() -> None:
+    config = _runner().config.config
+    runner, _prototype_config = checkpoint_module._build_runner(config)
+    accepted = runner.config.config["agent"]["config"].get("host_timing_metadata")
+
+    assert runner.config.config == config
+    assert accepted == "disabled_canonical_float32_positive_zero"
+
+    wall_clock = copy.deepcopy(config)
+    wall_clock["agent"]["config"]["host_timing_metadata"] = "wall_clock"
+    with pytest.raises(ValueError, match="host_timing_metadata is unsupported"):
+        checkpoint_module._build_runner(wall_clock)
+
+    missing = copy.deepcopy(config)
+    del missing["agent"]["config"]["host_timing_metadata"]
+    with pytest.raises(ValueError, match="agent.config fields do not match"):
+        checkpoint_module._build_runner(missing)
 
 
 def _agent_config() -> PrototypeAgentConfig:

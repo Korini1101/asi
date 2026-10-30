@@ -44,6 +44,7 @@ from alberta_framework.core.prototype_agent import (
     save_prototype_checkpoint,
 )
 from alberta_framework.prototype_reference_adapter import (
+    PROTOTYPE_REFERENCE_HOST_TIMING_POLICY,
     PrototypeReferenceAdapter,
     PrototypeReferenceState,
 )
@@ -1100,6 +1101,7 @@ def _build_runner(config_value: Any) -> tuple[ReferenceLifeRunner, dict[str, Any
             "adapter_schema",
             "dispatch_mode",
             "environment_mode",
+            "host_timing_metadata",
             "lifecycle_codec",
             "prototype_agent",
             "prototype_state_schema",
@@ -1107,6 +1109,14 @@ def _build_runner(config_value: Any) -> tuple[ReferenceLifeRunner, dict[str, Any
         },
         path="manifest.life_config.agent.config",
     )
+    if (
+        _require_str(
+            agent_binding["host_timing_metadata"],
+            path="manifest.life_config.agent.config.host_timing_metadata",
+        )
+        != PROTOTYPE_REFERENCE_HOST_TIMING_POLICY
+    ):
+        _fail("manifest.life_config.agent.config.host_timing_metadata is unsupported")
     prototype_config_raw = agent_binding["prototype_agent"]
     if type(prototype_config_raw) is not dict:
         _fail("manifest.life_config.agent.config.prototype_agent must be an object")
