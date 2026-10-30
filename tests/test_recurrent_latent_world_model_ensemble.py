@@ -159,6 +159,19 @@ def test_initialization_is_distinct_fixed_width_and_exactly_accounted() -> None:
     assert budget.replay_capacity == 0
 
 
+@pytest.mark.parametrize(
+    "key",
+    [
+        jr.key(0, impl="rbg"),
+        jr.PRNGKey(0),
+    ],
+)
+def test_init_rejects_keys_outside_the_typed_threefry_contract(key: jax.Array) -> None:
+    model = RecurrentLatentWorldModelEnsemble(_config())
+    with pytest.raises(ValueError, match="typed scalar threefry2x32"):
+        model.init(key)
+
+
 _REAL_SCALAR_FIELDS = (
     "learning_rate",
     "variance_floor",
@@ -867,6 +880,23 @@ def test_digest_bound_checkpoint_roundtrip_preserves_exact_future_stream(tmp_pat
         next_record,
     )
     _assert_tree_equal(original_next, restored_next)
+
+
+def test_internal_templates_ignore_the_ambient_prng_default(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "ambient-rbg.ckpt"
+    with jax.default_prng_impl("rbg"):
+        model = RecurrentLatentWorldModelEnsemble(_config())
+        state = model.init(jr.key(9, impl="threefry2x32"))
+        budget = model.resource_budget()
+        save_recurrent_latent_world_model_ensemble_checkpoint(model, state, checkpoint)
+        restored_model, restored_state = (
+            load_recurrent_latent_world_model_ensemble_checkpoint(checkpoint)
+        )
+
+    assert budget.bootstrap_prng_uint32_scalars == 2
+    assert str(jr.key_impl(restored_state.bootstrap_key)) == "threefry2x32"
+    assert bool(restored_model.state_valid(restored_state))
+    _assert_tree_equal(restored_state, state)
 
 
 def test_checkpoint_restore_does_not_depend_on_an_unrelated_template_draw(

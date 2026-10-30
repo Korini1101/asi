@@ -71,6 +71,7 @@ SCIENTIFIC_PROMOTION_ALLOWED = False
 RECURRENT_LATENT_WORLD_MODEL_ENSEMBLE_CHECKPOINT_SCHEMA = (
     "alberta.recurrent_latent_world_model_ensemble.v1"
 )
+_PRNG_IMPLEMENTATION = "threefry2x32"
 
 _MAX_STATE_NBYTES = 256 * 1024 * 1024
 _FLOAT32_MAX = float(np.finfo(np.float32).max)
@@ -78,6 +79,24 @@ _FLOAT32_TINY = float(np.finfo(np.float32).tiny)
 _LOG_TWO_PI = float(math.log(2.0 * math.pi))
 _INT32_MAX = 2**31 - 1
 _ACTUAL_INT_TYPES = frozenset({int, *(np.dtype(code).type for code in "bBhHiIlLqQpP")})
+
+
+def _require_typed_threefry_key(name: str, value: object) -> Array:
+    """Require the exact persisted two-word Threefry key contract."""
+    try:
+        key = jnp.asarray(value)
+        implementation = str(jr.key_impl(value))  # type: ignore[arg-type]
+        words = jr.key_data(value)  # type: ignore[arg-type]
+    except Exception as error:
+        raise ValueError(f"{name} must be a typed scalar threefry2x32 key") from error
+    if (
+        key.shape != ()
+        or implementation != _PRNG_IMPLEMENTATION
+        or words.shape != (2,)
+        or words.dtype != jnp.uint32
+    ):
+        raise ValueError(f"{name} must be a typed scalar threefry2x32 key")
+    return key
 
 
 def _positive_int(value: object, *, name: str, maximum: int = _INT32_MAX) -> int:
@@ -826,7 +845,7 @@ class RecurrentLatentWorldModelEnsemble:
 
     def __init__(self, config: RecurrentLatentWorldModelEnsembleConfig):
         self._config = config
-        template = self._initial_state(jr.key(0))
+        template = self._initial_state(jr.key(0, impl=_PRNG_IMPLEMENTATION))
         self._member_signature = _static_signature(template.member_parameters[0])
         self._state_signature = _static_signature(template)
         self._start_signature = _static_signature(self._zero_start_cache())
@@ -912,9 +931,7 @@ class RecurrentLatentWorldModelEnsemble:
         return state
 
     def _initial_state(self, key: Array) -> RecurrentLatentWorldModelEnsembleState:
-        key_data = jr.key_data(key)
-        if key_data.shape != (2,) or key_data.dtype != jnp.uint32:
-            raise ValueError("key must be one JAX PRNG key")
+        key = _require_typed_threefry_key("key", key)
         keys = jr.split(key, self._config.ensemble_size + 1)
         return RecurrentLatentWorldModelEnsembleState(
             member_parameters=tuple(
@@ -1048,7 +1065,9 @@ class RecurrentLatentWorldModelEnsemble:
             # irrelevant since valid=False gates every consumer, but the
             # pytree shape/dtype must match a real member_parameters tuple
             # for jax.lax.cond's branch-structure requirement.
-            owner_parameters=self._initial_state(jr.key(0)).member_parameters,
+            owner_parameters=self._initial_state(
+                jr.key(0, impl=_PRNG_IMPLEMENTATION)
+            ).member_parameters,
             observation=jnp.zeros((self._config.observation_dim,), dtype=jnp.float32),
             action=jnp.asarray(0, dtype=jnp.int32),
             prediction=self._zero_prediction(),
@@ -1684,7 +1703,11 @@ class RecurrentLatentWorldModelEnsemble:
         state: RecurrentLatentWorldModelEnsembleState | None = None,
     ) -> RecurrentLatentWorldModelResourceBudget:
         """Measure exact logical persistent/cache/result PyTree resources."""
-        measured = self.init(jr.key(0)) if state is None else state
+        measured = (
+            self.init(jr.key(0, impl=_PRNG_IMPLEMENTATION))
+            if state is None
+            else state
+        )
         self._validate_state_static(measured)
         if not bool(jax.device_get(self._state_valid(measured))):
             raise ValueError("cannot account an invalid state")
@@ -1806,7 +1829,11 @@ def load_recurrent_latent_world_model_ensemble_checkpoint(
         raise ValueError("checkpoint evidence level is not L0")
     if metadata.get("scientific_promotion_allowed") is not False:
         raise ValueError("checkpoint cannot claim scientific promotion")
-    key = jr.key(0) if template_key is None else template_key
+    key = (
+        jr.key(0, impl=_PRNG_IMPLEMENTATION)
+        if template_key is None
+        else template_key
+    )
     # The template supplies only the checkpoint's static PyTree contract.  It
     # must not make restoration depend on whether this unrelated random draw
     # happens to fit the configured parameter bound; the persisted state is
