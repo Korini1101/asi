@@ -99,6 +99,33 @@ def _require_feature_dim(value: object) -> int:
     return value
 
 
+def _require_typed_threefry_key(name: str, value: object) -> Array:
+    """Reject legacy or implementation-ambiguous keys before stream dispatch."""
+    actual_type = type(value)
+    if not (
+        issubclass(actual_type, jax.Array)
+        or issubclass(actual_type, jax.core.Tracer)
+    ):
+        raise ValueError(f"{name} must be a typed scalar threefry2x32 key")
+    key = cast(Array, value)
+    try:
+        words = jr.key_data(key)
+        implementation = str(jr.key_impl(key))
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            f"{name} must be a typed scalar threefry2x32 key"
+        ) from error
+    if (
+        key.shape != ()
+        or not jax.dtypes.issubdtype(key.dtype, jax.dtypes.prng_key)  # type: ignore[attr-defined]
+        or words.shape != (2,)
+        or words.dtype != jnp.uint32
+        or implementation != "threefry2x32"
+    ):
+        raise ValueError(f"{name} must be a typed scalar threefry2x32 key")
+    return key
+
+
 # =============================================================================
 # State
 # =============================================================================
@@ -232,6 +259,7 @@ class PartialObservationWrapper[InnerStateT]:
 
     def init(self, key: Array) -> PartialObservationState[InnerStateT]:
         """Initialize wrapper state."""
+        key = _require_typed_threefry_key("key", key)
         k_inner, k_mask = jr.split(key)
         inner_state = self._inner.init(k_inner)
         return PartialObservationState(  # type: ignore[call-arg]
