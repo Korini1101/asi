@@ -376,7 +376,8 @@ def run_single_experiment(
     seed = require_jax_seed(seed, name="seed")
     learner = config.learner_factory()
     stream = config.stream_factory()
-    key = jr.key(seed)
+    # A public experiment seed names one trajectory, independent of process defaults.
+    key = jr.key(seed, impl="threefry2x32")
 
     result = run_learning_loop(learner, stream, config.num_steps, key)
     final_state, metrics = cast(tuple[LearnerState, Any], result)
