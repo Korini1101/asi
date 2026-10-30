@@ -1028,6 +1028,38 @@ def test_average_reward_decoders_reject_schema_and_container_ambiguity() -> None
             {**sarsa_agent, "config": DictSubclass(sarsa_agent["config"])}  # type: ignore[arg-type]
         )
 
+    td_config = DifferentialTDConfig().to_config()
+    gtd_config = DifferentialGTDConfig().to_config()
+    for config_type, config in (
+        (DifferentialTDConfig, td_config),
+        (DifferentialGTDConfig, gtd_config),
+    ):
+        with pytest.raises(ValueError, match="actual dict"):
+            config_type.from_config(DictSubclass(config))  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="fields"):
+            config_type.from_config({**config, "extra": 1})
+        with pytest.raises(ValueError, match="fields"):
+            config_type.from_config({"type": config["type"]})
+        with pytest.raises(ValueError, match="type"):
+            config_type.from_config({**config, "type": "wrong"})
+
+    td_learner = DifferentialTDLearner().to_config()
+    gtd_learner = DifferentialGTDLearner().to_config()
+    for learner_type, learner in (
+        (DifferentialTDLearner, td_learner),
+        (DifferentialGTDLearner, gtd_learner),
+    ):
+        with pytest.raises(ValueError, match="actual dict"):
+            learner_type.from_config(DictSubclass(learner))  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="fields"):
+            learner_type.from_config({**learner, "extra": 1})
+        with pytest.raises(ValueError, match="type"):
+            learner_type.from_config({**learner, "type": "wrong"})
+        with pytest.raises(ValueError, match="nested config"):
+            learner_type.from_config(
+                {**learner, "config": DictSubclass(learner["config"])}  # type: ignore[arg-type]
+            )
+
 
 @pytest.mark.parametrize(
     ("config_type", "field", "value"),
