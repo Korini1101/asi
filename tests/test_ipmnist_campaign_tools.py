@@ -1011,6 +1011,31 @@ def test_rule_summary_rejects_v2_payload_arm_substitution(tmp_path: Path) -> Non
         )
 
 
+def test_rule_summary_rejects_hyperparameter_drift_within_an_arm(
+    tmp_path: Path,
+) -> None:
+    screen = tmp_path / "screen"
+    for name in SCREEN_ARMS:
+        for seed in (0, 1):
+            _rule_shard(
+                screen / f"{name}_seed{seed}.json",
+                name=name,
+                seed=seed,
+                accuracy=0.8,
+            )
+    path = screen / f"{SCREEN_ARMS[0]}_seed1.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["hyperparameters"]["step_size"] *= 2.0
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="inconsistent hyperparameters across seeds"):
+        build_legacy_rule_discovery_summary(
+            screen,
+            tmp_path / "confirm",
+            seeds=(0, 1),
+        )
+
+
 def test_rule_summary_rejects_screen_shards_as_confirmation(tmp_path: Path) -> None:
     campaign = _REPO_ROOT / "outputs" / "ipmnist_screening"
     confirm = tmp_path / "confirm"
