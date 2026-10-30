@@ -116,6 +116,24 @@ def _require_choice(name: str, value: object, choices: frozenset[str]) -> str:
     return value
 
 
+def _require_typed_threefry_key(name: str, value: object) -> Array:
+    """Reject legacy or non-Threefry keys before random operations."""
+    if not isinstance(value, jax.Array) or tuple(value.shape) != ():
+        raise ValueError(f"{name} must be a typed scalar threefry2x32 key")
+    try:
+        implementation = str(jr.key_impl(value))
+        words = jr.key_data(value)
+    except Exception as error:
+        raise ValueError(f"{name} must be a typed scalar threefry2x32 key") from error
+    if (
+        implementation != "threefry2x32"
+        or tuple(words.shape) != (2,)
+        or words.dtype != jnp.uint32
+    ):
+        raise ValueError(f"{name} must be a typed scalar threefry2x32 key")
+    return value
+
+
 def _validated_float32_scalar(
     name: str,
     value: object,
@@ -1850,6 +1868,7 @@ class CompositionalFeatureLearner:
         compositions of the active raw-input slots.
         """
         feature_dim = _require_int32("feature_dim", feature_dim, minimum=1)
+        key = _require_typed_threefry_key("key", key)
         if self._n_features < feature_dim:
             raise ValueError("n_features must be at least feature_dim so raw-input slots fit")
         if self._n_features > feature_dim and self._generation_strategy in {

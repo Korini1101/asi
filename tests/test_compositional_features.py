@@ -104,6 +104,14 @@ class TestCompositionalFeatureLearner:
             assert pa_np[i] < i
             assert pb_np[i] < i
 
+    def test_init_requires_a_typed_scalar_threefry_key(self) -> None:
+        learner = CompositionalFeatureLearner(n_features=4, n_tasks=1)
+
+        with pytest.raises(ValueError, match="typed scalar threefry2x32"):
+            learner.init(feature_dim=2, key=jr.PRNGKey(0))
+        with pytest.raises(ValueError, match="typed scalar threefry2x32"):
+            learner.init(feature_dim=2, key=jr.key(0, impl="rbg"))
+
     def test_forward_pass_topological_order(self) -> None:
         """Build a tiny DAG by hand and verify the forward gives the right values."""
         # Slots: [raw 0, raw 1, product(0, 1)] -> values [x[0], x[1], x[0]*x[1]]
