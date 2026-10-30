@@ -239,6 +239,9 @@ class DreamingConfig:
         unknown = set(data) - allowed
         if unknown:
             raise ValueError("DreamingConfig payload has unknown fields")
+        missing = allowed - set(data)
+        if missing:
+            raise ValueError("DreamingConfig payload has missing fields")
         return cls(**data)  # type: ignore[arg-type]
 
 
@@ -345,6 +348,9 @@ class DreamSelectionConfig:
         unknown = set(data) - allowed
         if unknown:
             raise ValueError("DreamSelectionConfig payload has unknown fields")
+        missing = allowed - set(data)
+        if missing:
+            raise ValueError("DreamSelectionConfig payload has missing fields")
         return cls(**data)  # type: ignore[arg-type]
 
 
@@ -780,6 +786,9 @@ class DreamRolloutConfig:
         unknown = set(data) - allowed
         if unknown:
             raise ValueError("DreamRolloutConfig payload has unknown fields")
+        missing = allowed - set(data)
+        if missing:
+            raise ValueError("DreamRolloutConfig payload has missing fields")
         return cls(**data)  # type: ignore[arg-type]
 
 
