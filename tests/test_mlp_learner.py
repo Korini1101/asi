@@ -1319,6 +1319,59 @@ class TestNeuronUtility:
         # utility should be strictly positive for non-zero gradient
         assert float(jnp.sum(new_state.neuron_utility[0])) > 0.0
 
+    def test_utility_keeps_representable_norm_when_square_sum_overflows(self) -> None:
+        """A finite row norm must not veto an otherwise valid update."""
+        learner = MLPLearner(
+            hidden_sizes=(1,),
+            step_size=0.1,
+            sparsity=0.0,
+            use_layer_norm=False,
+            track_neuron_utility=True,
+            neuron_utility_decay=0.0,
+        )
+        state = learner.init(feature_dim=8, key=jr.key(8))
+        state = state.replace(
+            params=state.params.replace(
+                weights=(
+                    jnp.zeros((1, 8), dtype=jnp.float32),
+                    jnp.ones((1, 1), dtype=jnp.float32),
+                ),
+                biases=(
+                    jnp.zeros((1,), dtype=jnp.float32),
+                    jnp.zeros((1,), dtype=jnp.float32),
+                ),
+            )
+        )
+        observation = jnp.full((8,), 7e18, dtype=jnp.float32)
+        expected_norm = float(np.float64(np.float32(7e18)) * np.sqrt(8.0))
+
+        raw_gradient = jax.grad(
+            lambda weights: learner._forward(
+                (weights, state.params.weights[1]),
+                state.params.biases,
+                observation,
+                learner._leaky_relu_slope,
+                learner._use_layer_norm,
+            )
+        )(state.params.weights[0])
+        assert bool(jnp.all(jnp.isfinite(raw_gradient)))
+        assert bool(jnp.isinf(jnp.linalg.norm(raw_gradient, axis=1)[0]))
+
+        result = learner.update(
+            state,
+            observation,
+            jnp.asarray(0.0, dtype=jnp.float32),
+        )
+
+        assert bool(result.update_applied)
+        assert int(result.state.step_count) == 1
+        assert result.state.neuron_utility is not None
+        np.testing.assert_allclose(
+            np.asarray(result.state.neuron_utility[0]),
+            np.asarray([expected_norm], dtype=np.float32),
+            rtol=1e-6,
+        )
+
     def test_dormant_fraction_zero_after_init(self):
         learner = MLPLearner(hidden_sizes=(16,), sparsity=0.0, track_neuron_utility=True)
         state = learner.init(feature_dim=8, key=jr.key(5))

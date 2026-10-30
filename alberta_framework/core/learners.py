@@ -221,6 +221,23 @@ def _skip_zero_scale(scale: Array, value: Array) -> Array:
     return jnp.where(scale == 0.0, jnp.zeros_like(value), scale * value)
 
 
+def _reduction_safe_row_l2_norm(values: Array) -> Array:
+    """Keep representable row norms finite when their square sum overflows."""
+
+    direct = jnp.sqrt(jnp.sum(values * values, axis=1) + 1e-12)
+    scale = jnp.max(jnp.abs(values), axis=1, keepdims=True)
+    _, exponents = jnp.frexp(scale)
+    scaled = jnp.ldexp(values, -exponents)
+    stable = jnp.ldexp(
+        jnp.sqrt(jnp.sum(scaled * scaled, axis=1)),
+        jnp.squeeze(exponents, axis=1),
+    )
+    reduction_only_overflow = ~jnp.isfinite(direct) & jnp.all(
+        jnp.isfinite(values), axis=1
+    )
+    return jnp.where(reduction_only_overflow, stable, direct)
+
+
 # Type variable for TD stream state
 StateT = TypeVar("StateT")
 
@@ -1363,10 +1380,25 @@ class MLPLearner:
             for fan_in, fan_out in zip(layer_sizes, layer_sizes[1:])
         )
         utility_count = sum(self._hidden_sizes) if self._track_neuron_utility else 0
-        # Parameters, traces, optimizer working/state copies, and optional utility.
+        hidden_weight_count = (
+            sum(
+                fan_out * fan_in
+                for fan_in, fan_out in zip(
+                    layer_sizes[:-2], layer_sizes[1:-1], strict=True
+                )
+            )
+            if self._track_neuron_utility
+            else 0
+        )
+        # Parameters, traces, optimizer working/state copies, optional utility,
+        # and the scaled-gradient plus row temporaries for safe utility norms.
         _preflight_float32_resources(
-            "MLP learner state and initialization work",
-            8 * parameter_count + utility_count + 3,
+            "MLP learner state, initialization, and update work",
+            8 * parameter_count
+            + utility_count
+            + hidden_weight_count
+            + 3 * utility_count
+            + 3,
         )
 
         # Build layer sizes: [feature_dim, hidden1, hidden2, ..., 1]
@@ -1644,7 +1676,7 @@ class MLPLearner:
                     decay * state.neuron_utility[i],
                 )
                 + (1.0 - decay)
-                * jnp.sqrt(jnp.sum(weight_grads[i] ** 2, axis=1) + 1e-12)
+                * _reduction_safe_row_l2_norm(weight_grads[i])
                 for i in range(len(self._hidden_sizes))
             )
 
