@@ -629,6 +629,7 @@ def run_learning_loop[StreamStateT](
         (final_learner, _), metrics = jax.lax.scan(
             step_fn, (learner_state, stream_state), jnp.arange(num_steps)
         )
+        jax.block_until_ready((final_learner, metrics))  # type: ignore[no-untyped-call]
         elapsed = time.time() - t0
         final_learner = final_learner.replace(uptime_s=final_learner.uptime_s + elapsed)  # type: ignore[attr-defined]
 
@@ -813,6 +814,7 @@ def run_learning_loop[StreamStateT](
         ),
         metrics,
     ) = jax.lax.scan(step_fn_with_tracking, initial_carry, jnp.arange(num_steps))
+    jax.block_until_ready((final_learner, metrics))  # type: ignore[no-untyped-call]
     elapsed = time.time() - t0
     final_learner = final_learner.replace(uptime_s=final_learner.uptime_s + elapsed)  # type: ignore[attr-defined]
 
