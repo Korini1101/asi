@@ -160,6 +160,46 @@ def test_single_tiny_positive_neighbor_score_still_has_unit_weight() -> None:
     np.testing.assert_allclose(retrieval.action, entry.action)
 
 
+def test_query_rejects_nonfinite_weighted_payload_aggregation() -> None:
+    maximum = float(np.finfo(np.float32).max)
+    memory = ExperientialMemory(
+        _config(
+            capacity=10,
+            top_k=10,
+            staleness_scale=maximum,
+        )
+    )
+    state = memory.init()
+    for provenance_id in range(10):
+        state = _write(
+            memory,
+            state,
+            _entry(
+                provenance_id,
+                observation=(maximum, maximum),
+                action=(maximum, maximum),
+                outcome=maximum,
+                reward=maximum,
+            ),
+        )
+
+    retrieval = memory.query(
+        state,
+        jnp.zeros((2,), dtype=jnp.float32),
+        jnp.asarray(1, dtype=jnp.int32),
+        jnp.asarray(0.0, dtype=jnp.float32),
+        jnp.asarray(True, dtype=jnp.bool_),
+    )
+
+    assert not bool(retrieval.accepted)
+    assert bool(retrieval.has_neighbors)
+    chex.assert_tree_all_finite(retrieval)
+    np.testing.assert_array_equal(retrieval.observation, jnp.zeros((2,)))
+    np.testing.assert_array_equal(retrieval.action, jnp.zeros((2,)))
+    np.testing.assert_array_equal(retrieval.outcome, jnp.zeros((1,)))
+    assert float(retrieval.reward) == 0.0
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
