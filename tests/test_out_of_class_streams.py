@@ -1350,6 +1350,42 @@ def test_out_of_class_resource_budget_matches_resident_state(stream: object) -> 
     assert budget["state_scalars"] * 4 == actual_bytes
 
 
+@pytest.mark.parametrize(
+    "stream",
+    [
+        OutOfClassPolynomialStream(
+            feature_dim=3,
+            n_tasks=1,
+            n_contexts=1,
+            active_triples_per_context=1,
+        ),
+        FrequencyMismatchStream(
+            feature_dim=1,
+            n_tasks=1,
+            n_components_per_task=1,
+            n_contexts=1,
+        ),
+        CompositionalStream(
+            feature_dim=1,
+            n_tasks=1,
+            inner_hidden=1,
+            outer_components=1,
+            n_contexts=1,
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "key",
+    [
+        pytest.param(jr.PRNGKey(0), id="legacy"),
+        pytest.param(jr.key(0, impl="rbg"), id="rbg"),
+    ],
+)
+def test_out_of_class_init_requires_typed_threefry_key(stream: object, key: object) -> None:
+    with pytest.raises(TypeError, match="typed scalar threefry2x32 key"):
+        stream.init(key)  # type: ignore[attr-defined]
+
+
 def test_out_of_class_derived_state_budgets_fail_at_construction() -> None:
     with pytest.raises(ValueError, match="frequency-mismatch.*64 MiB"):
         FrequencyMismatchStream(
