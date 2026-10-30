@@ -146,6 +146,11 @@ def test_config_and_ensemble_round_trip_are_strict() -> None:
             {"type": "WorldModelEnsemble", "config": config.to_config(), "extra": 1}
         )
 
+    incomplete_nested = config.to_config()
+    incomplete_nested["signal_estimator"].pop("change_temperature")
+    with pytest.raises(ValueError, match="serialized schema"):
+        WorldModelEnsembleConfig.from_config(incomplete_nested)
+
 
 @pytest.mark.parametrize(
     "missing_field",
