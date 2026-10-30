@@ -296,7 +296,10 @@ def _float32_operand(
     shape: tuple[int, ...],
 ) -> Array:
     """Narrow one numeric operand while preserving its exact shape contract."""
-    array = jnp.asarray(value, dtype=jnp.float32)
+    array = jnp.asarray(value)
+    if jnp.issubdtype(array.dtype, jnp.complexfloating):
+        raise ValueError(f"{name} must have a real numeric dtype")
+    array = array.astype(jnp.float32)
     if array.shape != shape:
         raise ValueError(f"{name} must have shape {shape}, got {array.shape}")
     return array
