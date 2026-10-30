@@ -1023,10 +1023,10 @@ class TestScheduleModuliRejectInvalid:
         chex.assert_trees_all_close(eager_timestep, jit_timestep)
         jax.block_until_ready((eager_state, jit_state))
 
-    def test_cyclic_int32_max_num_configurations_constructs(self):
-        """The representable boundary is valid even when allocation would be impractical."""
-        stream = CyclicStream(feature_dim=3, num_configurations=_INT32_MAX)
-        assert stream.feature_dim == 3
+    def test_cyclic_rejects_unnameable_configuration_working_set(self):
+        """Individually legal dimensions must not defer a huge matrix to JAX."""
+        with pytest.raises(ValueError, match="working set byte count"):
+            CyclicStream(feature_dim=3, num_configurations=59_652_323)
 
 
 def test_scaled_stream_wrapper_rejects_non_vector_feature_scales():
