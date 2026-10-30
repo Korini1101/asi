@@ -1146,6 +1146,30 @@ class RMSprop(Optimizer[Any]):
 # =============================================================================
 
 
+def _nadaline_weighted_square(configured_scale: float, scale: Array, value: Array) -> Array:
+    """Apply the EMA weight before squaring when a finite square overflows.
+
+    ``scale * value**2`` is the ordinary feature-scale increment. A finite
+    square keeps that product bitwise. When the square is outside float32,
+    the exponent form applies ``scale`` before the square so a representable
+    weighted moment stays finite. A result that is still outside float32
+    stays non-finite and the caller rejects the update.
+    """
+    square = value**2
+    ordinary = _skip_zero_scale(configured_scale, scale, square)
+    value_mantissa, value_exponent = jnp.frexp(value)
+    scale_mantissa, scale_exponent = jnp.frexp(scale)
+    recovered = jnp.ldexp(
+        scale_mantissa * value_mantissa**2,
+        scale_exponent + 2 * value_exponent,
+    )
+    return jnp.where(
+        jnp.isfinite(square) | ~jnp.isfinite(recovered),
+        ordinary,
+        recovered,
+    )
+
+
 class NADALINE(Optimizer[Any]):
     """NADALINE optimizer -- Normalized ADAptive LINear Element (Sutton 1988b).
 
@@ -1237,7 +1261,7 @@ class NADALINE(Optimizer[Any]):
         error_scalar = jnp.squeeze(error)
         new_second_moment = _skip_zero_scale(
             self._decay, state.decay, state.feature_second_moment
-        ) + _skip_zero_scale(1.0 - self._decay, 1.0 - state.decay, observation**2)
+        ) + _nadaline_weighted_square(1.0 - self._decay, 1.0 - state.decay, observation)
 
         denom = jnp.maximum(state.eps, new_second_moment)
         weight_delta = state.step_size * error_scalar * observation / denom
