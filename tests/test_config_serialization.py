@@ -6,6 +6,9 @@ import pytest
 from alberta_framework import (
     IDBD,
     LMS,
+    NADALINE,
+    AdaGain,
+    Adam,
     AdaptiveObGDBounding,
     AGCBounding,
     Autostep,
@@ -15,12 +18,14 @@ from alberta_framework import (
     MultiHeadMLPLearner,
     ObGD,
     ObGDBounding,
+    RMSprop,
     StreamingBatchNormalizer,
     WelfordNormalizer,
     bounder_from_config,
     normalizer_from_config,
     optimizer_from_config,
 )
+from alberta_framework.core.swift_td import SwiftTD
 
 # =============================================================================
 # Optimizer round-trip
@@ -49,6 +54,18 @@ class TestOptimizerConfig:
         assert isinstance(restored, IDBD)
         assert restored._initial_step_size == 0.02
         assert restored._meta_step_size == 0.03
+
+    def test_idbd_nondefault_decay_mode_round_trip(self):
+        optimizer = IDBD(
+            initial_step_size=0.02,
+            meta_step_size=0.03,
+            h_decay_mode="loss_grads",
+        )
+
+        restored = optimizer_from_config(optimizer.to_config())
+
+        assert isinstance(restored, IDBD)
+        assert restored.to_config() == optimizer.to_config()
 
     def test_autostep_round_trip(self):
         opt = Autostep(initial_step_size=0.01, meta_step_size=0.02, tau=5000.0)
@@ -88,6 +105,67 @@ class TestOptimizerConfig:
     def test_unknown_optimizer_raises(self):
         with pytest.raises(ValueError, match="Unknown optimizer"):
             optimizer_from_config({"type": "UnknownOpt"})
+
+    @pytest.mark.parametrize(
+        ("optimizer", "missing_field"),
+        [
+            (LMS(step_size=0.25), "step_size"),
+            (SwiftTD(trace_decay=0.75), "trace_decay"),
+        ],
+    )
+    def test_missing_optimizer_field_cannot_restore_a_default(
+        self, optimizer, missing_field
+    ):
+        config = optimizer.to_config()
+        del config[missing_field]
+
+        with pytest.raises(ValueError, match="optimizer config fields"):
+            optimizer_from_config(config)
+
+    def test_idbd_optional_field_does_not_make_required_fields_optional(self):
+        config = IDBD(h_decay_mode="loss_grads").to_config()
+        del config["initial_step_size"]
+
+        with pytest.raises(ValueError, match="optimizer config fields"):
+            optimizer_from_config(config)
+
+    @pytest.mark.parametrize(
+        "optimizer",
+        [
+            LMS(step_size=0.25),
+            IDBD(
+                initial_step_size=0.02,
+                meta_step_size=0.03,
+                h_decay_mode="loss_grads",
+            ),
+            Autostep(initial_step_size=0.02, meta_step_size=0.03, tau=2000.0),
+            AutostepGTDLambda(
+                initial_step_size=0.02,
+                meta_step_size=0.03,
+                tau=2000.0,
+                trace_decay=0.4,
+            ),
+            ObGD(step_size=0.25, kappa=2.0, gamma=0.95, lamda=0.8),
+            AdaGain(initial_step_size=0.02, meta_step_size=0.003, forgetting_rate=0.2),
+            Adam(step_size=0.002, beta1=0.8, beta2=0.99, eps=1e-7, weight_decay=0.01),
+            RMSprop(step_size=0.002, decay=0.9, eps=1e-7),
+            NADALINE(step_size=0.02, decay=0.9, eps=1e-7),
+            SwiftTD(
+                initial_step_size=1e-6,
+                meta_step_size=0.002,
+                trace_decay=0.4,
+                eta=0.2,
+                step_size_decay=0.9,
+                eta_min=1e-7,
+            ),
+        ],
+        ids=lambda optimizer: optimizer.to_config()["type"],
+    )
+    def test_every_registered_optimizer_round_trips_nondefault_config(self, optimizer):
+        restored = optimizer_from_config(optimizer.to_config())
+
+        assert type(restored) is type(optimizer)
+        assert restored.to_config() == optimizer.to_config()
 
 
 # =============================================================================
