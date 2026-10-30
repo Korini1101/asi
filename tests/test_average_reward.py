@@ -770,6 +770,39 @@ def test_differential_sarsa_start_with_action_rejects_fractional_action() -> Non
         )
 
 
+def test_differential_sarsa_start_rejects_nonfinite_observation_without_consuming_rng() -> None:
+    agent = DifferentialSARSAAgent(DifferentialSARSAConfig(n_actions=3))
+    state = agent.init(2, jr.key(0))
+
+    started, action = agent.start(
+        state,
+        jnp.array([jnp.nan, 0.0], dtype=jnp.float32),
+    )
+
+    assert int(action) == -1
+    chex.assert_trees_all_equal(started.last_observation, state.last_observation)
+    chex.assert_trees_all_equal(started.last_action, state.last_action)
+    chex.assert_trees_all_equal(jr.key_data(started.rng_key), jr.key_data(state.rng_key))
+    chex.assert_trees_all_equal(started.q_weights, state.q_weights)
+    chex.assert_trees_all_equal(started.step_words, state.step_words)
+
+
+def test_differential_sarsa_select_action_rejects_nonfinite_policy_state() -> None:
+    agent = DifferentialSARSAAgent(DifferentialSARSAConfig(n_actions=3))
+    state = agent.init(2, jr.key(0))
+    poisoned = state.replace(  # type: ignore[attr-defined]
+        q_weights=state.q_weights.at[0, 0].set(jnp.inf)
+    )
+
+    action, key = agent.select_action(
+        poisoned,
+        jnp.array([1.0, 0.0], dtype=jnp.float32),
+    )
+
+    assert int(action) == -1
+    chex.assert_trees_all_equal(jr.key_data(key), jr.key_data(poisoned.rng_key))
+
+
 def test_differential_sarsa_update_and_scan_are_finite() -> None:
     agent = DifferentialSARSAAgent(
         DifferentialSARSAConfig(

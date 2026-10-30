@@ -2148,8 +2148,10 @@ class DifferentialSARSAAgent:
             raise TypeError("differential SARSA rng_key must be a scalar PRNG key")
         return feature_dim
 
-    def _state_values_valid(self, state: DifferentialSARSAState) -> Bool[Array, ""]:
-        """Return dynamic validity excluding the separately reported clock."""
+    def _policy_state_values_valid(
+        self, state: DifferentialSARSAState
+    ) -> Bool[Array, ""]:
+        """Return dynamic validity for action selection, including fresh state."""
 
         return (
             jnp.all(jnp.isfinite(state.q_weights))
@@ -2161,12 +2163,18 @@ class DifferentialSARSAAgent:
             & jnp.isfinite(state.epsilon)
             & (state.epsilon >= 0.0)
             & (state.epsilon <= 1.0)
-            & (state.last_action >= 0)
+            & (state.last_action >= -1)
             & (state.last_action < self._config.n_actions)
+            & _lifetime_counter_valid(state.step_words, state.step_count)
             & jnp.isfinite(jnp.asarray(state.birth_timestamp, dtype=jnp.float32))
             & jnp.isfinite(jnp.asarray(state.uptime_s, dtype=jnp.float32))
             & (jnp.asarray(state.uptime_s, dtype=jnp.float32) >= 0.0)
         )
+
+    def _state_values_valid(self, state: DifferentialSARSAState) -> Bool[Array, ""]:
+        """Return update validity for a state with an executed prior action."""
+
+        return self._policy_state_values_valid(state) & (state.last_action >= 0)
 
     @staticmethod
     def _candidate_finite(state: DifferentialSARSAState) -> Bool[Array, ""]:
@@ -2195,8 +2203,29 @@ class DifferentialSARSAAgent:
         observation: Array,
     ) -> tuple[Int[Array, ""], Array]:
         """Select an epsilon-greedy action with uniform tie-breaking."""
+        feature_dim = self._require_state_contract(state)
+        raw_observation = jnp.asarray(observation)
+        if raw_observation.shape != (feature_dim,):
+            raise ValueError(
+                f"differential SARSA observation must have shape ({feature_dim},)"
+            )
+        if not (
+            jnp.issubdtype(raw_observation.dtype, jnp.floating)
+            or jnp.issubdtype(raw_observation.dtype, jnp.integer)
+        ):
+            raise TypeError("differential SARSA observation must be real numeric")
+        observation_f = raw_observation.astype(jnp.float32)
+        input_valid = self._policy_state_values_valid(state) & jnp.all(
+            jnp.isfinite(observation_f)
+        )
+        safe_observation = jnp.where(
+            input_valid,
+            observation_f,
+            jnp.zeros_like(observation_f),
+        )
         key, explore_key, noise_key, random_key = jr.split(state.rng_key, 4)
-        q_values = self.q_values(state, observation)
+        q_values = self.q_values(state, safe_observation)
+        policy_valid = input_valid & jnp.all(jnp.isfinite(q_values))
         maximum = jnp.max(q_values)
         tie_noise = jnp.where(
             q_values == maximum,
@@ -2206,7 +2235,11 @@ class DifferentialSARSAAgent:
         greedy_action = jnp.argmax(tie_noise).astype(jnp.int32)
         random_action = jr.randint(random_key, (), 0, self._config.n_actions).astype(jnp.int32)
         explore = jr.uniform(explore_key) < state.epsilon
-        return jax.lax.select(explore, random_action, greedy_action), key
+        action = jax.lax.select(explore, random_action, greedy_action)
+        return (
+            jnp.where(policy_valid, action, jnp.asarray(-1, dtype=jnp.int32)),
+            jax.lax.cond(policy_valid, lambda: key, lambda: state.rng_key),
+        )
 
     @functools.partial(jax.jit, static_argnums=(0,))
     def start(
@@ -2216,9 +2249,15 @@ class DifferentialSARSAAgent:
     ) -> tuple[DifferentialSARSAState, Int[Array, ""]]:
         """Select and store the first action for a continuing stream."""
         action, key = self.select_action(state, observation)
+        observation_f = jnp.asarray(observation, dtype=jnp.float32)
+        accepted = action >= 0
         return state.replace(
-            last_observation=observation,
-            last_action=action,
+            last_observation=jnp.where(
+                accepted,
+                observation_f,
+                state.last_observation,
+            ),
+            last_action=jnp.where(accepted, action, state.last_action),
             rng_key=key,
         ), action
 
@@ -2252,6 +2291,45 @@ class DifferentialSARSAAgent:
                 last_action=action_i,
             ),
             action_i,
+        )
+
+    @functools.partial(jax.jit, static_argnums=(0,))
+    def _rejected_update_result(
+        self,
+        state: DifferentialSARSAState,
+    ) -> DifferentialSARSAUpdateResult:
+        """Report a rejected external-action transaction without a candidate.
+
+        Integrated callers use this when :meth:`select_action` returns its
+        ``-1`` sentinel.  Constructing the ordinary update in that case would
+        index the last Q-value row and form a target from invalid policy input
+        before the transaction eventually rolls back.
+        """
+        self._require_state_contract(state)
+        _, lifetime_capacity_available = _checked_lifetime_words_increment(
+            state.step_words
+        )
+        lifetime_counter_valid = _lifetime_counter_valid(
+            state.step_words,
+            state.step_count,
+        )
+        state_valid = lifetime_counter_valid & self._state_values_valid(state)
+        candidate_state_finite = self._candidate_finite(state)
+        return DifferentialSARSAUpdateResult(
+            state=state,
+            action=state.last_action,
+            q_values=jnp.zeros((self._config.n_actions,), dtype=jnp.float32),
+            td_error=jnp.asarray(0.0, dtype=jnp.float32),
+            average_reward=state.average_reward,
+            reward=jnp.asarray(0.0, dtype=jnp.float32),
+            pre_step_words=state.step_words,
+            post_step_words=state.step_words,
+            lifetime_counter_valid=lifetime_counter_valid,
+            lifetime_capacity_available=lifetime_capacity_available,
+            state_valid=state_valid,
+            input_valid=jnp.asarray(False, dtype=jnp.bool_),
+            candidate_state_finite=candidate_state_finite,
+            update_applied=jnp.asarray(False, dtype=jnp.bool_),
         )
 
     @functools.partial(jax.jit, static_argnums=(0,))

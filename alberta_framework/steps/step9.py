@@ -627,16 +627,25 @@ def _update_control_with_linear_rng(
     proposed next action.  Select that action explicitly so the advanced key
     can remain linear even when the numerical update is rejected.
     """
-    next_action, next_key = agent.select_action(state, next_observation)
+    # This caller owns the linear reservation contract.  Action selection is
+    # deliberately fail-closed and preserves its key when policy inputs are
+    # invalid, but a rejected Step 9 transaction must still move past the
+    # randomness reserved for that attempt.
+    next_key, _, _, _ = jr.split(state.rng_key, 4)
+    next_action, _ = agent.select_action(state, next_observation)
     advanced_state = state.replace(rng_key=next_key)
     return cast(
         DifferentialSARSAUpdateResult,
-        agent.update(
-            advanced_state,
-            reward,
-            next_observation,
-            next_action=next_action,
-            discount=discount,
+        jax.lax.cond(
+            next_action >= 0,
+            lambda: agent.update(
+                advanced_state,
+                reward,
+                next_observation,
+                next_action=next_action,
+                discount=discount,
+            ),
+            lambda: agent._rejected_update_result(advanced_state),
         ),
     )
 
