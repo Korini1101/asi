@@ -853,6 +853,8 @@ def compare_learners(
     shorter), estimating settled performance less noisily than the last value.
     ``std`` is the population standard deviation over the complete recorded
     time-step trajectory; it is not a spread estimate across independent seeds.
+    ``cumulative`` uses a scaled compensated sum so finite cancellation does not
+    overflow merely because of reduction order.
 
     Args:
         results: Dictionary mapping learner name to metrics history
@@ -884,7 +886,10 @@ def compare_learners(
         normalized = values if scale == 0.0 else values / scale
         mean = _scale_safe_mean(values, name=f"learner {name}")
         std = float(np.std(normalized) * (1.0 if scale == 0.0 else scale))
-        cumulative = float(np.sum(values, dtype=np.float64))
+        cumulative = float(
+            math.fsum(float(value) for value in normalized)
+            * (1.0 if scale == 0.0 else scale)
+        )
         tail = values[-100:] if len(values) >= 100 else values
         final_100_mean = _scale_safe_mean(tail, name=f"learner {name} tail")
         if not math.isfinite(std) or not math.isfinite(cumulative):

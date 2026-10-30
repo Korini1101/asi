@@ -37,6 +37,30 @@ def test_compare_learners_uses_population_spread_over_recorded_steps() -> None:
     assert summary["learner"]["std"] == pytest.approx(1.0)
 
 
+def test_compare_learners_preserves_finite_cumulative_cancellation() -> None:
+    summary = compare_learners(
+        {
+            "learner": [
+                {"signal": 1e308},
+                {"signal": 1e308},
+                {"signal": -1e308},
+                {"signal": -1e308},
+            ]
+        },
+        metric="signal",
+    )
+
+    assert summary["learner"]["cumulative"] == 0.0
+
+
+def test_compare_learners_rejects_unrepresentable_cumulative_value() -> None:
+    with pytest.raises(ValueError, match="summaries must remain finite"):
+        compare_learners(
+            {"learner": [{"signal": 1e308}, {"signal": 1e308}]},
+            metric="signal",
+        )
+
+
 def test_accuracy_matrix_forgetting_and_backward_transfer() -> None:
     performance = np.array(
         [
