@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
@@ -28,6 +29,23 @@ _LAST_FIT_FEATURE_DIM = 35_791_391
 _FIRST_OVERFLOW_FEATURE_DIM = 35_791_392
 _CONTINUOUS_LAST_FIT_FEATURE_DIM = 35_791_391
 _CONTINUOUS_FIRST_OVERFLOW_FEATURE_DIM = 35_791_392
+
+
+def test_named_persistent_bytes_include_the_discount_cursor() -> None:
+    discrete = ActorCriticAgent(ActorCriticConfig(n_actions=2)).init(3, jr.key(0))
+    continuous = ContinuousActorCriticAgent(ContinuousActorCriticConfig(action_dim=2)).init(
+        3, jr.key(0)
+    )
+    for state, declared in (
+        (discrete, _actor_critic_persistent_bytes(2, 3)),
+        (continuous, _continuous_actor_critic_persistent_bytes(2, 3)),
+    ):
+        physical_bytes = sum(
+            jr.key_data(leaf).nbytes
+            if jnp.issubdtype(leaf.dtype, jax.dtypes.prng_key) else leaf.nbytes
+            for leaf in jax.tree.leaves(state)
+        )
+        assert declared == physical_bytes
 
 
 def test_int32_wrap_forges_a_different_published_byte_identity() -> None:
