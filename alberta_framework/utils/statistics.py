@@ -512,12 +512,13 @@ def ttest_comparison(
         pooled-standard-deviation Cohen's ``d``.
 
     Raises:
-        ValueError: If ``alpha`` is not a finite probability strictly between
-            0 and 1, scipy returns an invalid p-value, ``paired`` samples
-            differ in length or hold fewer than 2 pairs or are identical, or
-            an unpaired group is empty or has no positive pooled degrees of
-            freedom.
+        ValueError: If ``paired`` is not an exact bool, ``alpha`` is not a
+            finite probability strictly between 0 and 1, scipy returns an
+            invalid p-value, ``paired`` samples differ in length or hold fewer
+            than 2 pairs or are identical, or an unpaired group is empty or
+            has no positive pooled degrees of freedom.
     """
+    paired = _require_exact_bool("paired", paired)
     alpha_value = _require_alpha(alpha)
     a = _require_sample_vector(values_a, name="values_a")
     b = _require_sample_vector(values_b, name="values_b")
