@@ -712,6 +712,22 @@ class TestRiverSwim:
         with pytest.raises(ValueError, match="policy"):
             RiverSwimMDP(RiverSwimConfig(n_states=3)).policy_average_reward([0, 1])
 
+    @pytest.mark.parametrize(
+        "policy",
+        [
+            [0.9, 0.9, 0.9],
+            [1.9, 1.9, 1.9],
+            [False, True, True],
+            [np.float32(0.0), np.float32(1.0), np.float32(1.0)],
+        ],
+    )
+    def test_policy_gain_rejects_noninteger_action_identities(self, policy: object) -> None:
+        """The oracle must not measure a coerced policy under the caller's identity."""
+        env = RiverSwimMDP(RiverSwimConfig(n_states=3))
+
+        with pytest.raises(ValueError, match="policy actions"):
+            env.policy_average_reward(policy)  # type: ignore[arg-type]
+
     def test_riverswim_config_rejects_bool_and_nan_identities(self):
         """The public config record must not persist True/NaN step identities."""
         with pytest.raises(ValueError, match="p_right_up must be finite"):
