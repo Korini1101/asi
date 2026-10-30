@@ -7,6 +7,7 @@ import dataclasses
 import fcntl
 import hashlib
 import json
+import multiprocessing
 import os
 import shutil
 import struct
@@ -40,6 +41,38 @@ from tests._forager_matched_platform import HAS_RENAMEAT2, requires_renameat2
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 LIFECYCLE_ID = "prototype.0000001100000012"
+
+
+def _snapshot_after_regular_file_becomes_fifo(
+    source: str,
+    swap_started: Any,
+) -> None:
+    """Exercise the directory-entry/open race in an isolated process."""
+
+    real_open = checkpoint_module.os.open
+    swapped = False
+
+    def swap_before_open(
+        path: str | bytes | os.PathLike[str],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        nonlocal swapped
+        if not swapped and path == "payload" and dir_fd is not None:
+            os.unlink(path, dir_fd=dir_fd)
+            os.mkfifo(path, dir_fd=dir_fd)
+            swapped = True
+            swap_started.set()
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    checkpoint_module.os.open = swap_before_open
+    try:
+        with pytest.raises(ValueError, match="non-regular"):
+            checkpoint_module._snapshot_checkpoint(Path(source))
+    finally:
+        checkpoint_module.os.open = real_open
 
 
 def test_switching_metric_schedule_is_constant_time_at_counter_horizon() -> None:
@@ -364,6 +397,29 @@ def test_restore_rejects_incomplete_tampered_unknown_and_symlink_bundles(
     (symlinked / "life_state.json").symlink_to(checkpoint / "life_state.json")
     with pytest.raises(ValueError, match="symlink"):
         load_reference_life_checkpoint(symlinked)
+
+
+def test_snapshot_rejects_fifo_swap_without_blocking(tmp_path: Path) -> None:
+    source = tmp_path / "untrusted-checkpoint"
+    source.mkdir()
+    (source / "payload").write_bytes(b"regular before directory scan")
+
+    context = multiprocessing.get_context("spawn")
+    swap_started = context.Event()
+    process = context.Process(
+        target=_snapshot_after_regular_file_becomes_fifo,
+        args=(str(source), swap_started),
+    )
+    process.start()
+    assert swap_started.wait(timeout=15.0), "child did not reach the controlled file swap"
+    process.join(timeout=2.0)
+    exited_without_blocking = not process.is_alive()
+    if process.is_alive():
+        process.terminate()
+        process.join(timeout=5.0)
+
+    assert exited_without_blocking, "snapshot blocked while opening a raced FIFO"
+    assert process.exitcode == 0
 
 
 def test_restore_rejects_rehashed_duplicate_prototype_metadata_key(
