@@ -85,6 +85,48 @@ def _old_format_payload(state: STOMPState) -> dict:
     return payload
 
 
+@pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), float("-inf")])
+def test_stomp_start_rejects_nonfinite_observation(bad_value: float) -> None:
+    agent = _agent()
+    source = agent.init(jr.key(17))
+    observation = jnp.asarray((bad_value, 0.25, -0.5), dtype=jnp.float32)
+
+    with pytest.raises(ValueError, match="initial_observation must contain only finite values"):
+        agent.start(source, observation)
+
+    valid_observation = jnp.asarray((0.5, -0.25, 1.0), dtype=jnp.float32)
+    valid_started = agent.start(source, valid_observation)
+    result = agent.update(
+        valid_started,
+        jnp.asarray(0.75, dtype=jnp.float32),
+        jnp.asarray((-0.1, 0.4, 0.8), dtype=jnp.float32),
+        jnp.asarray(0.9, dtype=jnp.float32),
+    )
+    assert bool(result.update_applied)
+    assert bool(agent.state_valid(result.state))
+
+    traced_started = jax.jit(agent.start)(source, valid_observation)
+    chex.assert_trees_all_equal(traced_started.base_last_obs, valid_observation)
+    assert bool(agent.state_valid(traced_started))
+
+
+def test_stomp_start_allows_concrete_observation_captured_by_trace() -> None:
+    agent = _agent()
+    source = agent.init(jr.key(19))
+    valid_observation = jnp.asarray((0.5, -0.25, 1.0), dtype=jnp.float32)
+
+    nested_traced_started = jax.jit(
+        lambda current: jax.lax.cond(
+            jnp.asarray(True),
+            lambda selected: agent.start(selected, valid_observation),
+            lambda selected: selected,
+            current,
+        )
+    )(source)
+    chex.assert_trees_all_equal(nested_traced_started.base_last_obs, valid_observation)
+    assert bool(agent.state_valid(nested_traced_started))
+
+
 class TestStompCheckpointRoundTrip:
     """Current-format payloads must round-trip losslessly."""
 

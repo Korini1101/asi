@@ -81,6 +81,19 @@ def _require_int32(name: str, value: object, *, minimum: int, maximum: int = _IN
     return canonical
 
 
+def _require_concrete_finite(name: str, value: Array) -> Array:
+    """Reject non-finite values at an eager, state-committing boundary.
+
+    Traced inputs pass through because runtime gates remain authoritative
+    under ``jax.jit`` and ``jax.lax.scan``.
+    """
+    if not isinstance(value, jax.core.Tracer) and not bool(
+        np.all(np.isfinite(np.asarray(value)))
+    ):
+        raise ValueError(f"{name} must contain only finite values")
+    return value
+
+
 def _validate_hidden_sizes(sizes: object) -> tuple[int, ...]:
     if type(sizes) is not tuple:
         raise ValueError("base_hidden_sizes must be an actual tuple")
@@ -1857,13 +1870,25 @@ class STOMPAgent:
             step_words=jnp.zeros((2,), dtype=jnp.uint32),
         )
 
-    @functools.partial(jax.jit, static_argnums=(0,))
     def start(self, state: STOMPState, initial_observation: Array) -> STOMPState:
         """Prime state and select the first primitive action for dispatch.
 
         Use :meth:`start_with_action` when the caller needs the action
         explicitly. The state also records it in ``last_primitive_action``.
+
+        A concrete non-finite observation is rejected before it can enter
+        persistent state and make every later update fail closed. Traced
+        inputs pass through to the runtime state-finiteness gates.
         """
+        observation = jnp.asarray(initial_observation, dtype=jnp.float32).reshape(
+            (self._config.observation_dim,)
+        )
+        observation = _require_concrete_finite("initial_observation", observation)
+        return self._start(state, observation)
+
+    @functools.partial(jax.jit, static_argnums=(0,))
+    def _start(self, state: STOMPState, initial_observation: Array) -> STOMPState:
+        """Jitted implementation of one checked stream start."""
         cfg = self._config
         obs = jnp.asarray(initial_observation, dtype=jnp.float32).reshape((cfg.observation_dim,))
         key = state.rng_key
