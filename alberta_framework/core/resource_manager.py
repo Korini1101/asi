@@ -100,6 +100,30 @@ def _require_exact_tuple(name: str, value: object) -> tuple[Any, ...]:
     return value
 
 
+def _require_typed_threefry_key(name: str, value: object) -> Array:
+    """Require one scalar typed Threefry key before stochastic dispatch."""
+    actual_type = type(value)
+    if not (
+        issubclass(actual_type, jax.Array)
+        or issubclass(actual_type, jax.core.Tracer)
+    ):
+        raise TypeError(f"{name} must be a typed scalar threefry2x32 key")
+    try:
+        implementation = str(jr.key_impl(value))  # type: ignore[arg-type]
+        words = jr.key_data(value)  # type: ignore[arg-type]
+        shape = tuple(cast(Any, value).shape)
+    except Exception as error:
+        raise TypeError(f"{name} must be a typed scalar threefry2x32 key") from error
+    if (
+        shape != ()
+        or implementation != "threefry2x32"
+        or tuple(words.shape) != (2,)
+        or words.dtype != jnp.uint32
+    ):
+        raise TypeError(f"{name} must be a typed scalar threefry2x32 key")
+    return cast(Array, value)
+
+
 def _decode_sequence(name: str, value: object) -> tuple[Any, ...]:
     if type(value) is not list:
         raise ValueError(f"serialized {name} must be an exact JSON list")
@@ -1087,7 +1111,11 @@ class GeneratorMetaResourceManager:
     ) -> GeneratorMetaResourceDecision:
         """Sample one policy and return the generator knobs it controls."""
         self._require_state_contract(state)
-        return cast(GeneratorMetaResourceDecision, self._select_jit(state, key, context_id))
+        checked_key = _require_typed_threefry_key("key", key)
+        return cast(
+            GeneratorMetaResourceDecision,
+            self._select_jit(state, checked_key, context_id),
+        )
 
     @functools.partial(jax.jit, static_argnums=(0,))
     def _select_jit(
