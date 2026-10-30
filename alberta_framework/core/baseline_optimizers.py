@@ -528,6 +528,55 @@ class AdaGain(Optimizer[Any]):
 # =============================================================================
 
 
+def _adam_weighted_square(configured_scale: float, scale: Array, value: Array) -> Array:
+    """Apply the EMA weight before squaring when a finite square overflows.
+
+    ``scale * value**2`` is the ordinary second-moment increment. A finite
+    square keeps that product bitwise. When the square is outside float32,
+    the exponent form applies ``scale`` before the square so a representable
+    weighted moment stays finite. A result that is still outside float32
+    stays non-finite and the caller rejects the update.
+    """
+    square = value**2
+    ordinary = _skip_zero_scale(configured_scale, scale, square)
+    value_mantissa, value_exponent = jnp.frexp(value)
+    scale_mantissa, scale_exponent = jnp.frexp(scale)
+    recovered = jnp.ldexp(
+        scale_mantissa * value_mantissa**2,
+        scale_exponent + 2 * value_exponent,
+    )
+    return jnp.where(
+        jnp.isfinite(square) | ~jnp.isfinite(recovered),
+        ordinary,
+        recovered,
+    )
+
+
+def _adam_second_moment_rms(second_moment: Array, correction: Array) -> Array:
+    """Return ``sqrt(moment / correction)`` without overflowing the quotient.
+
+    Bias correction divides by ``1 - beta2**t``. On the first step that
+    divisor is ``1 - beta2``, so the quotient rebuilds ``g**2`` and can
+    overflow after the weighted moment itself was kept finite. A finite
+    direct root stays bitwise. A still-unrepresentable root stays non-finite
+    so the caller rejects the update.
+    """
+    direct = jnp.sqrt(second_moment / correction)
+    moment_mantissa, moment_exponent = jnp.frexp(second_moment)
+    correction_mantissa, correction_exponent = jnp.frexp(correction)
+    exponent_delta = moment_exponent - correction_exponent
+    half_exponent = jnp.floor_divide(exponent_delta, jnp.int32(2))
+    odd_exponent = (exponent_delta & jnp.int32(1)) != 0
+    root = jnp.sqrt(moment_mantissa / correction_mantissa)
+    root = jnp.where(odd_exponent, root * jnp.sqrt(jnp.float32(2.0)), root)
+    recovered = jnp.ldexp(root, half_exponent)
+    return jnp.where(
+        jnp.isfinite(direct) | ~jnp.isfinite(recovered),
+        direct,
+        recovered,
+    )
+
+
 class Adam(Optimizer[Any]):
     """Adam optimizer (Kingma & Ba 2014).
 
@@ -738,14 +787,14 @@ class Adam(Optimizer[Any]):
         new_m = _skip_zero_scale(self._beta1, state.beta1, state.m) + (
             1.0 - state.beta1
         ) * g
-        new_v = _skip_zero_scale(self._beta2, state.beta2, state.v) + (
-            1.0 - state.beta2
-        ) * g**2
+        new_v = _skip_zero_scale(self._beta2, state.beta2, state.v) + _adam_weighted_square(
+            1.0 - self._beta2, 1.0 - state.beta2, g
+        )
 
         m_hat = new_m / (1.0 - state.beta1**new_t)
-        v_hat = new_v / (1.0 - state.beta2**new_t)
+        second_rms = _adam_second_moment_rms(new_v, 1.0 - state.beta2**new_t)
 
-        step = state.step_size * m_hat / (jnp.sqrt(v_hat) + state.eps)
+        step = state.step_size * m_hat / (second_rms + state.eps)
         if self._weight_decay != 0.0 and param is not None:
             step = step + state.step_size * self._weight_decay * param
         if error is not None:
@@ -822,28 +871,27 @@ class Adam(Optimizer[Any]):
         new_m = _skip_zero_scale(self._beta1, state.beta1, state.m) + (
             1.0 - state.beta1
         ) * g
-        new_v = _skip_zero_scale(self._beta2, state.beta2, state.v) + (
-            1.0 - state.beta2
-        ) * g**2
+        new_v = _skip_zero_scale(self._beta2, state.beta2, state.v) + _adam_weighted_square(
+            1.0 - self._beta2, 1.0 - state.beta2, g
+        )
         new_bias_m = (
             _skip_zero_scale(self._beta1, state.beta1, state.bias_m)
             + (1.0 - state.beta1) * g_b
         )
-        new_bias_v = (
-            _skip_zero_scale(self._beta2, state.beta2, state.bias_v)
-            + (1.0 - state.beta2) * g_b**2
-        )
+        new_bias_v = _skip_zero_scale(
+            self._beta2, state.beta2, state.bias_v
+        ) + _adam_weighted_square(1.0 - self._beta2, 1.0 - state.beta2, g_b)
 
         m_hat = new_m / (1.0 - state.beta1**new_t)
-        v_hat = new_v / (1.0 - state.beta2**new_t)
+        second_rms = _adam_second_moment_rms(new_v, 1.0 - state.beta2**new_t)
         bias_m_hat = new_bias_m / (1.0 - state.beta1**new_t)
-        bias_v_hat = new_bias_v / (1.0 - state.beta2**new_t)
+        bias_second_rms = _adam_second_moment_rms(new_bias_v, 1.0 - state.beta2**new_t)
 
         # Descent step is alpha * m_hat / (sqrt(v_hat) + eps); we apply
         # weight_delta = -descent_step so that the resulting update
         # w += weight_delta moves in the direction that reduces loss.
-        weight_delta = -state.step_size * m_hat / (jnp.sqrt(v_hat) + state.eps)
-        bias_delta = -state.step_size * bias_m_hat / (jnp.sqrt(bias_v_hat) + state.eps)
+        weight_delta = -state.step_size * m_hat / (second_rms + state.eps)
+        bias_delta = -state.step_size * bias_m_hat / (bias_second_rms + state.eps)
 
         candidate_state = AdamState(
             m=new_m,
