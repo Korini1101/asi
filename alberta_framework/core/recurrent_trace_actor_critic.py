@@ -2335,6 +2335,11 @@ class RecurrentTraceActorCriticAgent:
             "observation must contain only finite values",
         )
         normalized, statistics = self._normalize_observation(state, observation)
+        normalized = _runtime_checked_value(
+            normalized,
+            _floating_tree_is_finite((normalized, statistics)),
+            "observation normalization produced non-finite state",
+        )
         actor_inputs = self._network_encode(state.actor_params, normalized)
         critic_inputs = self._network_encode(state.critic_params, normalized)
         reset = jnp.asarray(True)
