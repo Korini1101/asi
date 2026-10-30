@@ -566,6 +566,21 @@ class ActorCriticArrayResult:
     updates_applied: Bool[Array, " num_steps"]
 
 
+def _finite_cancelled_td(reward: Array, bootstrap: Array, prediction: Array) -> Array:
+    """Keep ``(reward + bootstrap) - prediction`` unless that sum overflows.
+
+    When the reward and the bootstrap are both huge, their sum can leave
+    float32 before the current prediction cancels the bootstrap. The
+    rearranged error ``reward + (bootstrap - prediction)`` can still be
+    finite. A TD error that remains outside float32 stays non-finite so the
+    caller rejects the update.
+    """
+    direct_partial = reward + bootstrap
+    direct_td = direct_partial - prediction
+    recovered_td = reward + (bootstrap - prediction)
+    return jnp.where(jnp.isfinite(direct_partial), direct_td, recovered_td)
+
+
 class ActorCriticAgent:
     """Linear actor-critic agent with a discrete softmax policy.
 
@@ -832,7 +847,7 @@ class ActorCriticAgent:
         discount = jnp.asarray(discount, dtype=jnp.float32)
         # Terminal 0 * inf V(s') is NaN and would freeze the critic.
         bootstrap = jnp.where(discount == 0.0, jnp.zeros_like(next_value), discount * next_value)
-        td_error = reward + bootstrap - value
+        td_error = _finite_cancelled_td(reward, bootstrap, value)
 
         one_hot = jax.nn.one_hot(action, cfg.n_actions, dtype=jnp.float32)
         actor_grad_bias = (one_hot - old_policy) / cfg.temperature
@@ -1707,7 +1722,7 @@ class ContinuousActorCriticAgent:
         discount = jnp.asarray(discount, dtype=jnp.float32)
         # Terminal 0 * inf V(s') is NaN and would freeze the critic.
         bootstrap = jnp.where(discount == 0.0, jnp.zeros_like(next_value), discount * next_value)
-        td_error = reward + bootstrap - value
+        td_error = _finite_cancelled_td(reward, bootstrap, value)
 
         diff = sample - prev_mean
         # Gaussian score function (per-dimension):
