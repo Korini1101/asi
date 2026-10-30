@@ -464,6 +464,32 @@ def test_reward_rate_prediction_preserves_raw_duration_and_floors_only_score() -
     )
 
 
+@pytest.mark.parametrize("invalid", [jnp.nan, jnp.inf, -jnp.inf])
+def test_prediction_fails_closed_on_nonfinite_observation(invalid: float) -> None:
+    learner = OptionValueDurationLearner(2)
+    state = learner.init(2).replace(
+        weights=jnp.ones((2, 2, 2), dtype=jnp.float32)
+    )
+    observation = jnp.asarray([1.0, invalid], dtype=jnp.float32)
+
+    heads = learner.predict_heads(state, observation)
+    prediction = learner.predict(state, observation)
+
+    chex.assert_trees_all_equal(heads, jnp.zeros((2, 2), dtype=jnp.float32))
+    chex.assert_trees_all_equal(
+        prediction.reward_values,
+        jnp.zeros((2,), dtype=jnp.float32),
+    )
+    chex.assert_trees_all_equal(
+        prediction.durations,
+        jnp.zeros((2,), dtype=jnp.float32),
+    )
+    chex.assert_trees_all_equal(
+        prediction.reward_rates,
+        jnp.zeros((2,), dtype=jnp.float32),
+    )
+
+
 def test_infinite_reward_on_zero_feature_does_not_poison_duration_head() -> None:
     """Inf reward is 0*inf = NaN on a silent feature of the reward head.
 
