@@ -322,6 +322,48 @@ def test_start_and_decide_are_read_only_predict_before_update_caches() -> None:
     assert float(prediction.aleatoric_uncertainty) > 0.0
 
 
+def test_decide_preserves_legal_large_member_predictions_and_ensemble_means() -> None:
+    """Finite heads must not collapse or overflow at a legal float32 bound."""
+    model = RecurrentLatentWorldModelEnsemble(
+        _config(
+            max_parameter_magnitude=3.0e38,
+            max_prediction_magnitude=3.0e38,
+            max_loss_magnitude=3.0e38,
+            uncertainty_warmup_steps=0,
+        )
+    )
+    state = model.init(jr.key(23))
+    mean_bias = jnp.asarray((2.0e38, 2.0e38, 2.0e38, 0.0), dtype=jnp.float32)
+    members = tuple(
+        member.replace(  # type: ignore[attr-defined]
+            mean_kernel=jnp.zeros_like(member.mean_kernel),
+            mean_bias=mean_bias,
+        )
+        for member in state.member_parameters
+    )
+    state = state.replace(member_parameters=members)  # type: ignore[attr-defined]
+
+    decision = _decision(model, state, jnp.zeros((2,), dtype=jnp.float32))
+    prediction = decision.prediction
+    bound = model.config.max_prediction_magnitude
+    expected = np.float32(bound * np.tanh(float(mean_bias[0]) / bound))
+
+    assert bool(model.state_valid(state))
+    assert bool(decision.valid)
+    assert bool(prediction.valid)
+    np.testing.assert_array_equal(
+        prediction.member_raw_outputs[:, :3],
+        np.full((3, 3), np.float32(2.0e38), dtype=np.float32),
+    )
+    np.testing.assert_allclose(
+        prediction.member_mean_predictions[:, :3], expected, rtol=2.0e-7
+    )
+    np.testing.assert_allclose(prediction.mean_prediction[:3], expected, rtol=2.0e-7)
+    np.testing.assert_array_equal(
+        prediction.per_head_epistemic_variance[:3], np.zeros((3,), dtype=np.float32)
+    )
+
+
 def test_nonboundary_update_commits_one_recurrent_advance_and_masked_nll_updates() -> None:
     model = RecurrentLatentWorldModelEnsemble(_config())
     state = model.init(jr.key(0))
