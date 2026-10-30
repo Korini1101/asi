@@ -2133,6 +2133,20 @@ def test_state_resource_budget_is_exact_and_init_preflights_before_rng(
         RecurrentTraceActorCriticAgent(config).init(2**31 - 1, jr.key(0))
 
 
+@pytest.mark.parametrize(
+    "key",
+    [
+        jr.key(3, impl="rbg"),
+        jr.key_data(jr.key(3, impl="threefry2x32")),
+    ],
+)
+def test_init_rejects_keys_outside_scalar_threefry_state_budget(key: Array) -> None:
+    agent = RecurrentTraceActorCriticAgent(_small_config())
+
+    with pytest.raises(ValueError, match="typed scalar threefry2x32 key"):
+        agent.init(2, key)
+
+
 def test_canonical_discrete_architecture_defaults_and_core_export() -> None:
     config = RecurrentTraceActorCriticConfig(n_actions=4)
     assert config.hidden_size == 192
