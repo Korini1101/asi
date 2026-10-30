@@ -552,6 +552,71 @@ class TestNormalizerABC:
         [EMANormalizer(), WelfordNormalizer(), StreamingBatchNormalizer()],
         ids=["EMA", "Welford", "StreamingBatch"],
     )
+    def test_update_rejects_observation_dimension_drift(self, normalizer) -> None:
+        """An update cannot broadcast an observation into a new state schema."""
+        state = normalizer.init(1)
+        mismatched = jnp.asarray([1.0, 2.0], dtype=jnp.float32)
+
+        with pytest.raises(ValueError, match="observation shape"):
+            normalizer.normalize_with_diagnostics(state, mismatched)
+
+    @pytest.mark.parametrize(
+        "normalizer",
+        [EMANormalizer(), WelfordNormalizer(), StreamingBatchNormalizer()],
+        ids=["EMA", "Welford", "StreamingBatch"],
+    )
+    def test_normalize_only_rejects_observation_dimension_drift(self, normalizer) -> None:
+        """Inference cannot silently broadcast an observation across features."""
+        state = normalizer.init(1)
+        mismatched = jnp.asarray([1.0, 2.0], dtype=jnp.float32)
+
+        with pytest.raises(ValueError, match="observation shape"):
+            normalizer.normalize_only(state, mismatched)
+
+    @pytest.mark.parametrize(
+        "normalizer",
+        [EMANormalizer(), WelfordNormalizer(), StreamingBatchNormalizer()],
+        ids=["EMA", "Welford", "StreamingBatch"],
+    )
+    @pytest.mark.parametrize(
+        "method_name",
+        ["normalize_only", "normalize_with_diagnostics"],
+    )
+    def test_paths_reject_variance_shape_drift(
+        self,
+        normalizer,
+        method_name: str,
+    ) -> None:
+        """A persisted variance cannot broadcast into a new feature schema."""
+        state = normalizer.init(1).replace(var=jnp.ones(2, dtype=jnp.float32))
+        observation = jnp.ones(1, dtype=jnp.float32)
+
+        with pytest.raises(ValueError, match="variance shape"):
+            getattr(normalizer, method_name)(state, observation)
+
+    @pytest.mark.parametrize(
+        "method_name",
+        ["normalize_only", "normalize_with_diagnostics"],
+    )
+    def test_welford_paths_reject_accumulator_shape_drift(
+        self,
+        method_name: str,
+    ) -> None:
+        """The persisted Welford accumulator shares the feature schema."""
+        normalizer = WelfordNormalizer()
+        state = normalizer.init(1).replace(p=jnp.zeros(2, dtype=jnp.float32))
+
+        with pytest.raises(ValueError, match="accumulator shape"):
+            getattr(normalizer, method_name)(
+                state,
+                jnp.ones(1, dtype=jnp.float32),
+            )
+
+    @pytest.mark.parametrize(
+        "normalizer",
+        [EMANormalizer(), WelfordNormalizer(), StreamingBatchNormalizer()],
+        ids=["EMA", "Welford", "StreamingBatch"],
+    )
     def test_inf_observation_holds_finite_statistics(self, normalizer) -> None:
         """Inf observation minus an inf mean is inf-inf = NaN.
 

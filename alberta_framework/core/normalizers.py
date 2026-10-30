@@ -252,6 +252,23 @@ class StreamingBatchNormalizerState:
 AnyNormalizerState = EMANormalizerState | WelfordNormalizerState | StreamingBatchNormalizerState
 
 
+def _require_feature_shapes(
+    state: AnyNormalizerState,
+    observation: Array,
+) -> None:
+    """Reject feature-axis drift before JAX can broadcast or trace it."""
+
+    expected = tuple(jnp.shape(state.mean))
+    if len(expected) != 1:
+        raise ValueError("normalizer state mean must be rank one")
+    if tuple(jnp.shape(state.var)) != expected:
+        raise ValueError("normalizer state variance shape must match mean shape")
+    if isinstance(state, WelfordNormalizerState) and tuple(jnp.shape(state.p)) != expected:
+        raise ValueError("normalizer state accumulator shape must match mean shape")
+    if tuple(jnp.shape(observation)) != expected:
+        raise ValueError("observation shape must match normalizer state mean shape")
+
+
 @chex.dataclass(frozen=True)
 class NormalizerCounterStatus:
     """Read-only preflight status for one normalizer update transaction."""
@@ -437,6 +454,7 @@ class Normalizer[
         Returns:
             Normalized observation
         """
+        _require_feature_shapes(state, observation)
         std = jnp.sqrt(state.var)
         normalized = (observation - state.mean) / (std + self._epsilon)
         # Inf observation minus an inf mean is inf-inf = NaN. Zero only
@@ -561,6 +579,7 @@ class EMANormalizer(Normalizer[EMANormalizerState]):
             Tuple of (normalized_observation, new_state)
         """
         status = self.counter_status(state)
+        _require_feature_shapes(state, observation)
         observation_valid = jnp.all(jnp.isfinite(observation))
         zero_decay = state.decay == jnp.asarray(0.0, dtype=jnp.float32)
         checked_state = EMANormalizerState(
@@ -720,6 +739,7 @@ class WelfordNormalizer(Normalizer[WelfordNormalizerState]):
             Tuple of (normalized_observation, new_state)
         """
         status = self.counter_status(state)
+        _require_feature_shapes(state, observation)
         observation_valid = jnp.all(jnp.isfinite(observation))
         source_state_finite = _floating_tree_is_finite(state)
         update_available = (
@@ -847,6 +867,7 @@ class StreamingBatchNormalizer(Normalizer[StreamingBatchNormalizerState]):
     ) -> NormalizerUpdateResult:
         """Normalize and conditionally commit BatchNorm-style moments."""
         status = self.counter_status(state)
+        _require_feature_shapes(state, observation)
         observation_valid = jnp.all(jnp.isfinite(observation))
         zero_momentum = state.momentum == jnp.asarray(0.0, dtype=jnp.float32)
         checked_state = StreamingBatchNormalizerState(
