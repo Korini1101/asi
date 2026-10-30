@@ -144,6 +144,28 @@ def test_world_model_rejects_size_one_scalar_aliases(
         jax.jit(call)()
 
 
+def test_world_model_preserves_wide_integer_action_identity() -> None:
+    """A legal int32 action must not be rounded through float32 before encoding."""
+    expected_action = 2**24 + 1
+    model = OneStepWorldModel(
+        WorldModelConfig(
+            observation_dim=1,
+            n_actions=expected_action + 1,
+            hidden_sizes=(),
+        )
+    )
+    action = jnp.asarray(expected_action, dtype=jnp.int32)
+
+    @jax.jit
+    def selected_entries(value: jax.Array) -> jax.Array:
+        encoded = model.encode_action(value)
+        # Consume only the two relevant entries so XLA can fuse away the
+        # logically large one-hot vector required to expose the float32 cliff.
+        return jnp.asarray([encoded[expected_action], encoded[expected_action - 1]])
+
+    np.testing.assert_array_equal(selected_entries(action), [1.0, 0.0])
+
+
 def test_world_model_preserves_direct_numeric_dtype_canonicalization() -> None:
     model = OneStepWorldModel(
         WorldModelConfig(
@@ -269,6 +291,31 @@ def test_world_model_scan_is_jit_compatible() -> None:
     chex.assert_shape(result.next_observation_predictions, (4, 2))
     chex.assert_tree_all_finite(result.reward_predictions)
     chex.assert_tree_all_finite(result.next_observation_predictions)
+
+
+@pytest.mark.parametrize("dtype", [np.int64, np.uint64])
+def test_world_model_scan_rejects_wide_host_integer_action(dtype) -> None:
+    """Host integers outside int32 cannot wrap onto a legal scan action."""
+    model = OneStepWorldModel(
+        WorldModelConfig(
+            observation_dim=1,
+            n_actions=2,
+            hidden_sizes=(),
+            sparsity=0.0,
+        )
+    )
+    observations = jnp.zeros((1, 1), dtype=jnp.float32)
+    result = run_world_model_learning_loop(
+        model,
+        model.init(jr.key(0)),
+        observations,
+        np.asarray([2**32], dtype=dtype),
+        jnp.zeros((1,), dtype=jnp.float32),
+        observations,
+    )
+
+    assert not bool(result.updates_applied[0])
+    assert int(result.state.step_count) == 0
 
 
 def test_world_model_learns_action_conditional_deterministic_transition() -> None:
