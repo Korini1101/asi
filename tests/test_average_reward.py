@@ -867,6 +867,22 @@ def test_differential_sarsa_update_and_scan_are_finite() -> None:
     assert bool(jnp.all(result.actions < 3))
 
 
+def test_differential_sarsa_scan_rejects_unprimed_state() -> None:
+    """A missing initial decision must not look like a valid zero-update run."""
+    agent = DifferentialSARSAAgent(DifferentialSARSAConfig(n_actions=2))
+    state = agent.init(2, jr.key(19))
+    rewards = jnp.array([1.0], dtype=jnp.float32)
+    next_observations = jnp.array([[0.0, 1.0]], dtype=jnp.float32)
+
+    with pytest.raises(ValueError, match="must be primed"):
+        run_differential_sarsa_from_arrays(
+            agent,
+            state,
+            rewards,
+            next_observations,
+        )
+
+
 def test_differential_sarsa_learns_better_action_on_continuing_bandit() -> None:
     agent = DifferentialSARSAAgent(
         DifferentialSARSAConfig(
