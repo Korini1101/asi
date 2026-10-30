@@ -1155,3 +1155,15 @@ def test_checkpoint_rejects_nonfinite_and_boolean_numeric_corruption() -> None:
     boolean["state_digest"] = _digest(boolean["state"])
     with pytest.raises(ValueError, match="JSON real"):
         DualReplayMemory.from_checkpoint_payload(boolean)
+
+
+def test_checkpoint_rejects_lossy_float32_numeric_payload() -> None:
+    memory = DualReplayMemory(_config())
+    state = _record_range(memory, memory.init(jr.key(22)), 0, 1)
+    payload = json.loads(json.dumps(memory.checkpoint_payload(state)))
+
+    payload["state"]["short_term"]["rewards"][0] = 16_777_217
+    payload["state_digest"] = _digest(payload["state"])
+
+    with pytest.raises(ValueError, match="exact float32"):
+        DualReplayMemory.from_checkpoint_payload(payload)
