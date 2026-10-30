@@ -1275,6 +1275,33 @@ class TestPairwiseComparisons:
 
         assert result[("a", "b")].statistic == pytest.approx(0.0)
 
+    def test_final_window_mean_preserves_representable_finite_extremes(self) -> None:
+        maximum = np.finfo(np.float64).max
+        high = AggregatedResults(
+            config_name="high",
+            seeds=[0, 1, 2],
+            metric_arrays={"reward": np.full((3, 2), maximum, dtype=np.float64)},
+            summary={},
+        )
+        low = AggregatedResults(
+            config_name="low",
+            seeds=[10, 11, 12],
+            metric_arrays={"reward": np.full((3, 2), maximum / 2.0, dtype=np.float64)},
+            summary={},
+        )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            result = pairwise_comparisons(
+                {"high": high, "low": low},
+                metric="reward",
+                test="mann_whitney",
+                window=2,
+            )[("high", "low")]
+
+        assert result.statistic == pytest.approx(9.0)
+        assert result.effect_size == pytest.approx(1.0)
+
     @staticmethod
     def _settled_trace(name: str, n_steps: int, transient: float) -> AggregatedResults:
         """Three seeds that start at ``transient`` and settle at exactly 1.0 after step 9."""
