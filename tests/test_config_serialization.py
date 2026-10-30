@@ -128,6 +128,30 @@ class TestBounderConfig:
         assert restored._clip_factor == 0.02
         assert restored._eps == 1e-4
 
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        (
+            ("clip_factor", -0.01),
+            ("clip_factor", float("nan")),
+            ("clip_factor", float("inf")),
+            ("clip_factor", True),
+            ("eps", -1e-3),
+            ("eps", float("nan")),
+            ("eps", float("inf")),
+            ("eps", True),
+        ),
+    )
+    def test_agc_bounding_rejects_invalid_scalar_domains(
+        self,
+        field: str,
+        value: object,
+    ) -> None:
+        config = AGCBounding().to_config()
+        config[field] = value
+
+        with pytest.raises(ValueError, match=field):
+            bounder_from_config(config)
+
     def test_adaptive_obgd_reduces_large_steps(self):
         """AdaptiveObGDBounding should scale down large per-weight steps."""
         b = AdaptiveObGDBounding(kappa=1.0, eps=1e-8)

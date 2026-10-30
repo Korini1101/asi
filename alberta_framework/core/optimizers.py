@@ -362,8 +362,10 @@ class AGCBounding(Bounder):
     """
 
     def __init__(self, clip_factor: float = 0.01, eps: float = 1e-3):
-        self._clip_factor = clip_factor
-        self._eps = eps
+        self._clip_factor = validated_float32_scalar(
+            "clip_factor", clip_factor, lower=0.0
+        )
+        self._eps = validated_float32_scalar("eps", eps, lower=0.0)
 
     def to_config(self) -> dict[str, Any]:
         """Serialize configuration to dict."""
