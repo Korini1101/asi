@@ -1303,6 +1303,27 @@ class AverageRewardHordeLearner:
         )
 
 
+def _finite_cancelled_differential_td(
+    reward: Array,
+    baseline: Array,
+    bootstrap: Array,
+    prediction: Array,
+) -> Array:
+    """Keep the historical sum unless that partial sum overflows.
+
+    ``((reward - baseline) + bootstrap) - prediction`` is the ordinary
+    association. When ``reward - baseline + bootstrap`` is non-finite but
+    ``bootstrap - prediction`` cancels, the rearranged error can still be
+    finite. A TD error that remains outside float32 stays non-finite so the
+    caller rejects the update. A finite partial sum keeps the left-to-right
+    rounding.
+    """
+    direct_partial = reward - baseline + bootstrap
+    direct_td = direct_partial - prediction
+    recovered_td = reward - baseline + (bootstrap - prediction)
+    return jnp.where(jnp.isfinite(direct_partial), direct_td, recovered_td)
+
+
 class DifferentialGTDLearner:
     """Linear off-policy differential GTD/TDC prediction.
 
@@ -1410,7 +1431,12 @@ class DifferentialGTDLearner:
         )
         prediction = self.predict(state, observation)
         next_prediction = self.predict(state, next_observation)
-        td_error = reward_s - state.average_reward + next_prediction - prediction
+        td_error = _finite_cancelled_differential_td(
+            reward_s,
+            state.average_reward,
+            next_prediction,
+            prediction,
+        )
 
         traces = rho_s * (lamda * state.eligibility_traces + observation)
         bias_trace = rho_s * (lamda * state.bias_eligibility_trace + 1.0)
@@ -1570,7 +1596,12 @@ class DifferentialTDLearner:
         reward_s = jnp.squeeze(jnp.asarray(reward, dtype=jnp.float32))
         value = self.predict(state, observation)
         next_value = self.predict(state, next_observation)
-        return cast(Array, reward_s - state.average_reward + next_value - value)
+        return _finite_cancelled_differential_td(
+            reward_s,
+            state.average_reward,
+            next_value,
+            value,
+        )
 
     @functools.partial(jax.jit, static_argnums=(0,))
     def update(
@@ -1589,7 +1620,12 @@ class DifferentialTDLearner:
         reward_s = jnp.squeeze(jnp.asarray(reward, dtype=jnp.float32))
         prediction = self.predict(state, observation)
         next_prediction = self.predict(state, next_observation)
-        td_error = reward_s - state.average_reward + next_prediction - prediction
+        td_error = _finite_cancelled_differential_td(
+            reward_s,
+            state.average_reward,
+            next_prediction,
+            prediction,
+        )
 
         traces = lamda * state.eligibility_traces + observation
         bias_trace = lamda * state.bias_eligibility_trace + 1.0
@@ -2386,9 +2422,11 @@ class DifferentialSARSAAgent:
         discount_s = jnp.squeeze(jnp.asarray(discount, dtype=jnp.float32))
         q_prev = self.q_values(state, state.last_observation)[state.last_action]
         q_next = self.q_values(state, next_observation)[next_action]
-        return cast(
-            Array,
-            reward_s - state.average_reward + discount_s * q_next - q_prev,
+        return _finite_cancelled_differential_td(
+            reward_s,
+            state.average_reward,
+            discount_s * q_next,
+            q_prev,
         )
 
     @functools.partial(jax.jit, static_argnums=(0,))
@@ -2483,7 +2521,12 @@ class DifferentialSARSAAgent:
         q_next_all = self.q_values(state, next_observation_f)
         q_prev = q_prev_all[state.last_action]
         q_next = q_next_all[selected_next_action]
-        td_error = reward_s - state.average_reward + discount_s * q_next - q_prev
+        td_error = _finite_cancelled_differential_td(
+            reward_s,
+            state.average_reward,
+            discount_s * q_next,
+            q_prev,
+        )
 
         action_mask = jax.nn.one_hot(
             state.last_action,
