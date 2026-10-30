@@ -234,6 +234,22 @@ def test_world_model_config_roundtrip_preserves_action_encoding() -> None:
     )
 
 
+@pytest.mark.parametrize("tamper", ["missing_type", "wrong_type", "extra_field"])
+def test_world_model_from_config_rejects_noncanonical_outer_schema(tamper: str) -> None:
+    payload = OneStepWorldModel(
+        WorldModelConfig(observation_dim=2, hidden_sizes=())
+    ).to_config()
+    if tamper == "missing_type":
+        del payload["type"]
+    elif tamper == "wrong_type":
+        payload["type"] = "ActionConditionedWorldModel"
+    else:
+        payload["undeclared"] = None
+
+    with pytest.raises(ValueError, match="fields|type"):
+        OneStepWorldModel.from_config(payload)
+
+
 def test_world_model_nan_targets_mask_missing_heads() -> None:
     cfg = WorldModelConfig(
         observation_dim=2,

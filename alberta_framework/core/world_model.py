@@ -229,6 +229,28 @@ def _serialized_sequence(name: str, value: object) -> tuple[Any, ...]:
     return tuple(cast(list[Any] | tuple[Any, ...], value))
 
 
+def _serialized_world_model_payload(
+    name: str,
+    value: object,
+    *,
+    expected_type: str,
+) -> dict[str, Any]:
+    """Require the complete outer identity emitted by a world model."""
+    if not issubclass(type(value), Mapping):
+        raise ValueError(f"{name} must be an actual mapping")
+    try:
+        payload = dict(cast(Mapping[Any, Any], value))
+    except Exception as error:
+        raise ValueError(f"{name} must be a readable mapping") from error
+    if any(type(key) is not str for key in payload):
+        raise ValueError(f"{name} keys must be exact strings")
+    if set(payload) != {"type", "config", "learner"}:
+        raise ValueError(f"{name} fields do not match the serialized schema")
+    if type(payload["type"]) is not str or payload["type"] != expected_type:
+        raise ValueError(f"{name} type differs")
+    return payload
+
+
 def _require_scan_resource(name: str, *, float32_scalars: int, bool_scalars: int) -> None:
     if float32_scalars + bool_scalars > _INT32_MAX:
         raise ValueError(f"derived {name} scalar count must fit in signed int32")
@@ -697,7 +719,7 @@ class ActionConditionedWorldModel:
         }
 
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> ActionConditionedWorldModel:
+    def from_config(cls, config: Mapping[str, Any]) -> ActionConditionedWorldModel:
         """Reconstruct from :meth:`to_config` output.
 
         This restores constructor-level model hyperparameters. Optimizer,
@@ -710,8 +732,11 @@ class ActionConditionedWorldModel:
             optimizer_from_config,
         )
 
-        payload = dict(config)
-        payload.pop("type", None)
+        payload = _serialized_world_model_payload(
+            "ActionConditionedWorldModel config",
+            config,
+            expected_type=cls.__name__,
+        )
         model_config = ActionConditionedWorldModelConfig.from_config(payload["config"])
         learner_cfg = dict(payload["learner"])
         optimizer = optimizer_from_config(learner_cfg["optimizer"])
@@ -1374,7 +1399,7 @@ class OneStepWorldModel:
         }
 
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> OneStepWorldModel:
+    def from_config(cls, config: Mapping[str, Any]) -> OneStepWorldModel:
         """Reconstruct from :meth:`to_config` output."""
         from alberta_framework.core.normalizers import normalizer_from_config
         from alberta_framework.core.optimizers import (
@@ -1382,8 +1407,11 @@ class OneStepWorldModel:
             optimizer_from_config,
         )
 
-        payload = dict(config)
-        payload.pop("type", None)
+        payload = _serialized_world_model_payload(
+            "OneStepWorldModel config",
+            config,
+            expected_type=cls.__name__,
+        )
         model_config = WorldModelConfig.from_config(payload["config"])
         learner_cfg = dict(payload["learner"])
         optimizer = optimizer_from_config(learner_cfg["optimizer"])

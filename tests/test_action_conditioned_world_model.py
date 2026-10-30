@@ -246,6 +246,28 @@ def test_action_conditioned_world_model_config_roundtrip() -> None:
     chex.assert_trees_all_close(features[-4:], jnp.array([0.0, 0.0, 1.0, 0.0]))
 
 
+@pytest.mark.parametrize("tamper", ["missing_type", "wrong_type", "extra_field"])
+def test_action_world_model_from_config_rejects_noncanonical_outer_schema(
+    tamper: str,
+) -> None:
+    payload = ActionConditionedWorldModel(
+        ActionConditionedWorldModelConfig(
+            observation_dim=2,
+            n_actions=2,
+            hidden_sizes=(),
+        )
+    ).to_config()
+    if tamper == "missing_type":
+        del payload["type"]
+    elif tamper == "wrong_type":
+        payload["type"] = "OneStepWorldModel"
+    else:
+        payload["undeclared"] = None
+
+    with pytest.raises(ValueError, match="fields|type"):
+        ActionConditionedWorldModel.from_config(payload)
+
+
 def test_action_conditioned_world_model_optional_interaction_features() -> None:
     config = ActionConditionedWorldModelConfig(
         observation_dim=2,
