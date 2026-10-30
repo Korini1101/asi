@@ -827,6 +827,62 @@ def test_step7_planning_accepted_tracks_the_core_learner_rollback() -> None:
     assert smoke.planning_acceptance_count == sum(replayed)
 
 
+def test_step7_planning_backup_starts_from_empty_eligibility() -> None:
+    """An imagined backup must leave the real-experience traces untouched.
+
+    With ``trace_decay > 0`` the backup used to run on the live traces: the
+    imagined TD error moved every state-action in the real trace, and the
+    imagined gradient stayed in the trace for the next real update.
+    """
+    cfg = Step7DynaConfig(
+        control=Step6DifferentialSARSAConfig(
+            n_actions=N_ACTIONS,
+            trace_decay=0.9,
+            epsilon_start=1.0,
+            epsilon_end=0.0,
+            epsilon_decay_steps=100,
+        ),
+        world_model=Step8WorldModelConfig(
+            observation_dim=3, n_actions=N_ACTIONS, hidden_sizes=(), use_layer_norm=False
+        ),
+        planning_steps=1,
+        planning_rollout_depth=1,
+        planning_warmup_steps=0,
+        planning_memory_size=8,
+        planning_strategy="random",
+        planning_apply_importance_correction=False,
+    )
+    agent, model = make_step7_components(cfg)
+    steps = 16
+    data_key, state_key = jr.split(jr.key(0))
+    observations = jr.normal(data_key, (steps + 1, 3), dtype=jnp.float32)
+    rewards = jnp.tanh(observations[1:, 0])
+    state = init_step7_state(
+        agent, model, key=state_key, initial_observation=observations[0], memory_size=8
+    )
+    for t in range(steps):
+        result = step7_update(cfg, agent, model, state, rewards[t], observations[t + 1])
+        assert bool(result.planning_accepted[0])
+        real = result.real_control_result.state
+        final = result.state.control_state
+        anchor = result.state.memory_observations[result.planning_anchor_indices[0]]
+        action_mask = jnp.eye(N_ACTIONS, dtype=jnp.float32)[result.planning_actions[0]]
+        step = cfg.control.q_step_size * result.planning_td_errors[0]
+        # A one-step backup at the anchor moves only the imagined action's values.
+        chex.assert_trees_all_close(
+            final.q_weights,
+            real.q_weights + step * action_mask[:, None] * anchor[None, :],
+            atol=1e-6,
+        )
+        chex.assert_trees_all_close(final.q_bias, real.q_bias + step * action_mask, atol=1e-6)
+        chex.assert_trees_all_equal(final.q_trace_weights, real.q_trace_weights)
+        chex.assert_trees_all_equal(final.q_trace_bias, real.q_trace_bias)
+        assert int(final.step_count) == int(real.step_count)
+        chex.assert_trees_all_equal(final.step_words, real.step_words)
+        chex.assert_trees_all_equal(final.epsilon, real.epsilon)
+        state = result.state
+
+
 def _legal_step7_smoke_result(**overrides: object) -> Step7SmokeResult:
     payload: dict[str, object] = {
         "config": Step7DynaConfig(),

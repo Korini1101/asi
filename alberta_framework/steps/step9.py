@@ -95,7 +95,9 @@ class Step9DreamingConfig:
     fires a fixed dreaming budget: for each dream the agent samples a recent
     anchor observation, picks a random action, queries the world model, and
     applies the imagined update **only** when the model passes two guards:
-    sufficient warm-up data and a low running prediction-error EMA.
+    sufficient warm-up data and a low running prediction-error EMA.  Each
+    dream starts from empty eligibility traces, and the real-experience
+    traces are restored afterwards.
 
     Args:
         control: Step 6 differential SARSA configuration.
@@ -783,8 +785,13 @@ def step9_update(
         selected_index = selection.selected_indices[0]
         anchor_obs = candidate_anchors[selected_index]
         action = candidate_actions[selected_index]
+        # A dream starts from empty eligibility: the real traces must neither
+        # receive imagined TD errors nor absorb imagined gradients that the
+        # next real TD error would then credit.
         initial_control_state = ctrl_state.replace(
-            rng_key=control_rollout_key
+            rng_key=control_rollout_key,
+            q_trace_weights=jnp.zeros_like(ctrl_state.q_trace_weights),
+            q_trace_bias=jnp.zeros_like(ctrl_state.q_trace_bias),
         )
         initial_behavior_state = behavior_state.replace(
             rng_key=behavior_rollout_key
@@ -865,6 +872,11 @@ def step9_update(
         restored = rollout_ctrl.replace(
             last_observation=control_after_real.last_observation,
             last_action=control_after_real.last_action,
+            epsilon=control_after_real.epsilon,
+            step_count=control_after_real.step_count,
+            step_words=control_after_real.step_words,
+            q_trace_weights=ctrl_state.q_trace_weights,
+            q_trace_bias=ctrl_state.q_trace_bias,
         )
         next_ctrl = cast(
             DifferentialSARSAState,

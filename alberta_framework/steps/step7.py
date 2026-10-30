@@ -101,6 +101,8 @@ class Step7DynaConfig:
 
     The real transition update always happens first. Planning then performs a
     fixed number of model-generated one-step backups, gated by model warmup.
+    Each imagined rollout starts from empty eligibility traces, and the
+    real-experience traces are restored afterwards.
     """
 
     control: Step6DifferentialSARSAConfig = field(
@@ -1153,12 +1155,19 @@ def step7_update(
                 planned.state.rng_key,
             ), (planned.td_error, prediction.reward, planned.update_applied)
 
+        # An imagined rollout starts from empty eligibility: the real traces
+        # must neither receive imagined TD errors nor absorb imagined
+        # gradients that the next real TD error would then credit.
+        rollout_start_state = carry_state.replace(  # type: ignore[attr-defined]
+            q_trace_weights=jnp.zeros_like(carry_state.q_trace_weights),
+            q_trace_bias=jnp.zeros_like(carry_state.q_trace_bias),
+        )
         (
             (rollout_state, _rollout_observation, _rollout_action, _rollout_key),
             (rollout_td_errors, rollout_rewards, rollout_updates_applied),
         ) = jax.lax.scan(
             rollout_step,
-            (carry_state, anchor_observation, action, key),
+            (rollout_start_state, anchor_observation, action, key),
             jnp.arange(config.planning_rollout_depth, dtype=jnp.int32),
         )
         # A backup counts as accepted only if the core learner actually applied
@@ -1172,6 +1181,11 @@ def step7_update(
             rollout_state.replace(  # type: ignore[attr-defined]
                 last_observation=control_after_real.last_observation,
                 last_action=control_after_real.last_action,
+                epsilon=control_after_real.epsilon,
+                step_count=control_after_real.step_count,
+                step_words=control_after_real.step_words,
+                q_trace_weights=carry_state.q_trace_weights,
+                q_trace_bias=carry_state.q_trace_bias,
             ),
         )
         corrected_state = jax.lax.cond(

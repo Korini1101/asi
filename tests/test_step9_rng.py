@@ -334,6 +334,8 @@ def test_accepted_dream_uses_dedicated_candidate_behavior_and_control_roots() ->
         last_observation=anchor_observation,
         last_action=candidate.action,
         rng_key=control_root,
+        q_trace_weights=jnp.zeros_like(control_after_real.q_trace_weights),
+        q_trace_bias=jnp.zeros_like(control_after_real.q_trace_bias),
     )
     expected_dream = agent.update(
         dedicated_input,
@@ -345,6 +347,11 @@ def test_accepted_dream_uses_dedicated_candidate_behavior_and_control_roots() ->
         average_reward=dedicated_input.average_reward,
         last_observation=control_after_real.last_observation,
         last_action=control_after_real.last_action,
+        epsilon=control_after_real.epsilon,
+        step_count=control_after_real.step_count,
+        step_words=control_after_real.step_words,
+        q_trace_weights=control_after_real.q_trace_weights,
+        q_trace_bias=control_after_real.q_trace_bias,
         rng_key=reserved,
     )
     expected_behavior = behavior_model.sample_action(
