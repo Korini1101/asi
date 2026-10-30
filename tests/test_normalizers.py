@@ -842,6 +842,46 @@ class TestNormalizerScalarSingleConversion:
         assert getattr(normalizer, f"_{field}") == in_domain
 
 
+class TestNormalizerEpsilonFloat32Domain:
+    """The numerical stabilizer must survive at its float32 execution sink."""
+
+    @pytest.mark.parametrize(
+        "normalizer_cls",
+        [EMANormalizer, WelfordNormalizer, StreamingBatchNormalizer],
+        ids=["ema", "welford", "streaming-batch"],
+    )
+    @pytest.mark.parametrize(
+        "epsilon",
+        [
+            pytest.param(1e-100, id="underflows-to-zero"),
+            pytest.param(
+                float(np.nextafter(np.finfo(np.float32).tiny, np.float32(0.0))),
+                id="subnormal-flushes-to-zero",
+            ),
+            pytest.param(1e100, id="overflows-to-infinity"),
+        ],
+    )
+    def test_rejects_epsilon_outside_positive_normal_float32(
+        self,
+        normalizer_cls,
+        epsilon: float,
+    ) -> None:
+        with pytest.raises(ValueError, match="epsilon"):
+            normalizer_cls(epsilon=epsilon)
+
+    @pytest.mark.parametrize(
+        "epsilon",
+        [
+            pytest.param(float(np.finfo(np.float32).tiny), id="minimum-normal"),
+            pytest.param(float(np.finfo(np.float32).max), id="maximum-finite"),
+        ],
+    )
+    def test_accepts_inclusive_normal_float32_boundaries(self, epsilon: float) -> None:
+        normalizer = EMANormalizer(epsilon=epsilon)
+
+        assert normalizer.to_config()["epsilon"] == epsilon
+
+
 class TestNormalizerFeatureDimValidation:
     @pytest.mark.parametrize(
         "normalizer",
