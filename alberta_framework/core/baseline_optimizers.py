@@ -445,6 +445,11 @@ class AdaGain(Optimizer[Any]):
         new_bias_step_size = jnp.clip(new_bias_step_size, 1e-8, 1.0)
 
         weight_delta = new_step_sizes * gradient
+        # Preserve the established rounding whenever error * observation is
+        # representable.  If only that intermediate overflows, apply the gain
+        # first so a mathematically finite AdaGain step is not discarded.
+        scaled_weight_delta = (new_step_sizes * error_scalar) * observation
+        weight_delta = jnp.where(jnp.isfinite(weight_delta), weight_delta, scaled_weight_delta)
         bias_delta = new_bias_step_size * bias_gradient
 
         trace_mix = state.forgetting_rate
