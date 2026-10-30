@@ -1076,7 +1076,8 @@ class DispatchReceipt:
                 executor_id=executor_id,
                 executor_epoch="legacy.preview1",
             )
-            applied_action = dispatch.effective_action
+            if applied_action is None:
+                applied_action = dispatch.effective_action
         elif dispatch is not None:
             if executor_id is not None:
                 raise ValueError("receipt constructors cannot mix executor_id with command")
