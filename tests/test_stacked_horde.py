@@ -992,6 +992,25 @@ def test_stacked_horde_step_count_saturates_without_jit_wraparound() -> None:
     assert int(result.state.step_count) == 2**31 - 1
 
 
+@pytest.mark.parametrize("use_jit", [False, True])
+def test_stacked_horde_rejects_negative_lifetime_counter(use_jit: bool) -> None:
+    horde = StackedLinearHorde(_simple_config(n_demons=1, feature_dim=2))
+    state = horde.init().replace(step_count=jnp.asarray(-1, dtype=jnp.int32))
+    update = jax.jit(horde.update) if use_jit else horde.update
+
+    result = update(
+        state,
+        jnp.ones(2, dtype=jnp.float32),
+        jnp.ones(2, dtype=jnp.float32),
+        jnp.ones(1, dtype=jnp.float32),
+    )
+
+    assert not bool(result.update_applied)
+    assert int(result.state.step_count) == -1
+    np.testing.assert_array_equal(result.state.weights, state.weights)
+    np.testing.assert_array_equal(result.state.traces, state.traces)
+
+
 def test_stacked_horde_scan_rejects_derived_result_overflow_without_allocation() -> None:
     horde = StackedLinearHorde(_simple_config(n_demons=2, feature_dim=3))
     state = horde.init()
