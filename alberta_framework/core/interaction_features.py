@@ -86,6 +86,25 @@ def _require_int32(
     return canonical
 
 
+def _require_typed_threefry_key(name: str, value: object) -> Array:
+    """Require one typed scalar Threefry key without accepting legacy words."""
+
+    try:
+        key = jnp.asarray(value)
+        implementation = str(jr.key_impl(value))  # type: ignore[arg-type]
+        words = jr.key_data(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as error:
+        raise TypeError(f"{name} must be a typed scalar threefry2x32 key") from error
+    if (
+        key.shape != ()
+        or implementation != "threefry2x32"
+        or words.shape != (2,)
+        or words.dtype != jnp.uint32
+    ):
+        raise TypeError(f"{name} must be a typed scalar threefry2x32 key")
+    return key
+
+
 def _require_interaction_feature_loop_steps(name: str, value: object) -> int:
     """Reject scan lengths above the public last-fit before ``jnp.arange``."""
     if type(value) is not int or value < 1 or value > _INTERACTION_FEATURE_LOOP_MAX_STEPS:
@@ -965,12 +984,7 @@ class FixedBudgetInteractionLearner:
             raise TypeError("state must be an InteractionFeatureState")
         if feature_dim < 1:
             raise ValueError("feature_dim must be positive")
-        key = jnp.asarray(state.key)
-        if key.shape != () or not jnp.issubdtype(
-            key.dtype,
-            jax.dtypes.prng_key,
-        ):
-            raise TypeError("interaction-feature key must be a scalar PRNG key")
+        _require_typed_threefry_key("interaction-feature key", state.key)
 
         float_contracts = (
             ("output_weights", state.output_weights, (self._n_tasks, self._n_features)),
@@ -1386,6 +1400,7 @@ class FixedBudgetInteractionLearner:
     def init(self, feature_dim: int, key: Array) -> InteractionFeatureState:
         """Initialize active and candidate pair banks."""
         feature_dim = _require_int32("feature_dim", feature_dim, minimum=1)
+        key = _require_typed_threefry_key("key", key)
         if feature_dim < 2 and not self._include_squares:
             raise ValueError("feature_dim must be at least 2 when squares are disabled")
         if self._candidate_strategy == "all_pairs" and self._candidate_count > 0:
@@ -3897,7 +3912,10 @@ def load_interaction_feature_checkpoint(
         feature_dim = _require_int32("feature_dim", metadata.get("feature_dim"), minimum=1)
     except ValueError as error:
         raise ValueError("interaction-feature checkpoint feature_dim is invalid") from error
-    template = learner.init(feature_dim=feature_dim, key=jr.key(0))
+    template = learner.init(
+        feature_dim=feature_dim,
+        key=jr.key(0, impl="threefry2x32"),
+    )
     restored, restored_metadata = load_checkpoint(template, path)
     if restored_metadata != metadata:
         raise ValueError("interaction-feature checkpoint metadata changed between reads")
