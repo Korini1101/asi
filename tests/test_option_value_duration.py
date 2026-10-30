@@ -349,6 +349,90 @@ def test_termination_does_not_multiply_inf_next_prediction() -> None:
     assert bool(result.update_applied)
 
 
+@pytest.mark.parametrize("sign", [-1.0, 1.0])
+def test_overflowing_reward_sum_keeps_finite_cancelled_td(sign: float) -> None:
+    """``reward + V(s')`` can overflow while ``reward + (V(s') - V(s))`` is finite.
+
+    Both the current prediction and the bootstrap are ``sign * 2e38`` and the
+    reward matches them, so the conventional TD error is that reward. The
+    left-associated sum is not a float32 value and must not drop the reward head.
+    """
+    learner = OptionValueDurationLearner(
+        1,
+        OptionValueDurationConfig(reward_step_size=0.1, duration_step_size=0.2),
+    )
+    magnitude = np.float32(sign * 2.0e38)
+    state = learner.init(1).replace(  # type: ignore[attr-defined]
+        weights=jnp.asarray([[[magnitude], [0.0]]], dtype=jnp.float32)
+    )
+    obs = jnp.ones((1,), dtype=jnp.float32)
+    reward = jnp.asarray(magnitude, dtype=jnp.float32)
+    option = jnp.asarray(0, dtype=jnp.int32)
+    discount = jnp.asarray(1.0, dtype=jnp.float32)
+    reward_step = np.float32(learner.config.reward_step_size)
+    duration_step = np.float32(learner.config.duration_step_size)
+    expected_reward_weight = np.float32(magnitude + reward_step * magnitude)
+
+    with jax.disable_jit():
+        eager = learner.update(state, obs, option, reward, obs, discount)
+    compiled = jax.jit(learner.update)(state, obs, option, reward, obs, discount)
+
+    for result in (eager, compiled):
+        assert bool(result.head_updates_applied[0])
+        assert bool(result.head_updates_applied[1])
+        np.testing.assert_array_equal(np.asarray(result.td_errors[0]), magnitude)
+        np.testing.assert_array_equal(
+            np.asarray(result.state.weights[0, 0, 0]),
+            expected_reward_weight,
+        )
+        np.testing.assert_array_equal(
+            np.asarray(result.state.weights[0, 1, 0]),
+            duration_step,
+        )
+        assert bool(np.isfinite(np.asarray(result.td_targets)).all())
+        assert int(result.state.step_count) == 1
+
+
+@pytest.mark.parametrize(
+    ("next_feature", "reward_step_size"),
+    [(0.0, 0.1), (1.0, 1.0)],
+)
+def test_unrepresentable_reward_update_still_rejects_the_reward_head(
+    next_feature: float,
+    reward_step_size: float,
+) -> None:
+    """Do not apply a reward step whose TD error or weight is not float32."""
+    learner = OptionValueDurationLearner(
+        1,
+        OptionValueDurationConfig(
+            reward_step_size=reward_step_size,
+            duration_step_size=0.0,
+        ),
+    )
+    magnitude = np.float32(2.0e38)
+    reward_weight = np.float32(-magnitude if next_feature == 0.0 else magnitude)
+    state = learner.init(1).replace(  # type: ignore[attr-defined]
+        weights=jnp.asarray([[[reward_weight], [0.0]]], dtype=jnp.float32)
+    )
+    obs = jnp.ones((1,), dtype=jnp.float32)
+    reward = jnp.asarray(magnitude, dtype=jnp.float32)
+    option = jnp.asarray(0, dtype=jnp.int32)
+    discount = jnp.asarray(1.0, dtype=jnp.float32)
+    next_obs = jnp.asarray([next_feature], dtype=jnp.float32)
+
+    with jax.disable_jit():
+        eager = learner.update(state, obs, option, reward, next_obs, discount)
+    compiled = jax.jit(learner.update)(state, obs, option, reward, next_obs, discount)
+
+    for result in (eager, compiled):
+        assert not bool(result.head_updates_applied[0])
+        np.testing.assert_array_equal(np.asarray(result.td_errors[0]), np.float32(0.0))
+        np.testing.assert_array_equal(
+            np.asarray(result.state.weights[0, 0]),
+            np.asarray(state.weights[0, 0]),
+        )
+
+
 def test_reward_rate_prediction_preserves_raw_duration_and_floors_only_score() -> None:
     learner = OptionValueDurationLearner(
         2,
