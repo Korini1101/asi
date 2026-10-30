@@ -408,6 +408,18 @@ def _static_array_contract(
         raise TypeError(f"{name} must have dtype {expected_dtype}; got {actual_dtype}")
 
 
+def _observation_vector(raw_observation: object, observation_dim: int) -> Array:
+    """Convert one observation without flattening batch or column axes."""
+    observation = jnp.asarray(raw_observation, dtype=jnp.float32)
+    _static_array_contract(
+        observation,
+        name="raw_observation",
+        shape=(observation_dim,),
+        dtype=jnp.float32,
+    )
+    return observation
+
+
 def _scale_safe_l2_norm(values: Array) -> Float[Array, ""]:
     """Return a finite, saturating float32 L2 norm without squaring overflow."""
     vector = jnp.asarray(values, dtype=jnp.float32).reshape((-1,))
@@ -806,9 +818,7 @@ class IdentityStateBuilder:
     ) -> Float[Array, " observation_dim"]:
         """Return the raw observation without touching ``state``."""
         del state
-        return jnp.asarray(raw_observation, dtype=jnp.float32).reshape(
-            (self._config.observation_dim,)
-        )
+        return _observation_vector(raw_observation, self._config.observation_dim)
 
     @functools.partial(jax.jit, static_argnums=(0,))
     def update(
@@ -1128,9 +1138,7 @@ class FixedTraceStateBuilder:
         raw_observation: Array,
     ) -> Float[Array, " feature_dim"]:
         """Combine a raw observation with the already-current trace state."""
-        observation = jnp.asarray(raw_observation, dtype=jnp.float32).reshape(
-            (self._config.observation_dim,)
-        )
+        observation = _observation_vector(raw_observation, self._config.observation_dim)
         return cast(
             Float[Array, " feature_dim"],
             self._memory.features(
@@ -1151,9 +1159,7 @@ class FixedTraceStateBuilder:
         previous_discount: Array | float,
     ) -> tuple[WorkingMemoryState, Float[Array, " feature_dim"]]:
         """Advance all trace banks and emit the post-update memory state."""
-        observation = jnp.asarray(raw_observation, dtype=jnp.float32).reshape(
-            (self._config.observation_dim,)
-        )
+        observation = _observation_vector(raw_observation, self._config.observation_dim)
         safe_action, action_valid = safe_discrete_action(
             previous_action,
             self._config.n_actions,
@@ -1643,9 +1649,7 @@ class OnlineGatedStateBuilder:
         previous_reward: Array | float,
         previous_discount: Array | float,
     ) -> Array:
-        observation = jnp.asarray(raw_observation, dtype=jnp.float32).reshape(
-            (self._config.observation_dim,)
-        )
+        observation = _observation_vector(raw_observation, self._config.observation_dim)
         return jnp.concatenate(
             [
                 observation,
@@ -1662,9 +1666,7 @@ class OnlineGatedStateBuilder:
         raw_observation: Array,
     ) -> Float[Array, " feature_dim"]:
         """Pair raw input with the current hidden state without advancing it."""
-        observation = jnp.asarray(raw_observation, dtype=jnp.float32).reshape(
-            (self._config.observation_dim,)
-        )
+        observation = _observation_vector(raw_observation, self._config.observation_dim)
         if self._config.include_raw_observation:
             return jnp.concatenate([observation, state.hidden])
         return state.hidden
