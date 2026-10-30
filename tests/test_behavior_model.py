@@ -129,6 +129,43 @@ def test_init_predict_update_finite_and_shapes() -> None:
     assert float(result.loss) > 0.0
 
 
+@pytest.mark.parametrize("shape", ((1, 2), (2, 1)))
+@pytest.mark.parametrize(
+    "entrypoint",
+    (
+        "predict_logits",
+        "predict_probabilities",
+        "action_probability",
+        "action_log_likelihood",
+        "input_loss_gradient",
+        "update",
+        "sample_action",
+        "importance_ratio",
+    ),
+)
+def test_behavior_model_rejects_wrong_shaped_observations(
+    shape: tuple[int, int],
+    entrypoint: str,
+) -> None:
+    model = BehaviorModel(BehaviorModelConfig(n_actions=3, step_size=0.1))
+    state = model.init(feature_dim=2, key=jax.random.key(0))
+    observation = jnp.ones(shape, dtype=jnp.float32)
+    action = jnp.array(1, dtype=jnp.int32)
+
+    with pytest.raises(ValueError, match=r"observation must have shape \(2,\)"):
+        if entrypoint in {"predict_logits", "predict_probabilities", "sample_action"}:
+            getattr(model, entrypoint)(state, observation)
+        elif entrypoint == "importance_ratio":
+            model.importance_ratio(
+                state,
+                observation,
+                action,
+                jnp.full((3,), 1.0 / 3.0, dtype=jnp.float32),
+            )
+        else:
+            getattr(model, entrypoint)(state, observation, action)
+
+
 def test_infinite_observation_does_not_poison_weights() -> None:
     """Inf obs makes softmax NaN and logit_error * x = 0*inf on a silent feature."""
     model = BehaviorModel(BehaviorModelConfig(n_actions=2, step_size=0.1))

@@ -800,6 +800,20 @@ class BehaviorModel:
             replay_capacity=0,
         )
 
+    @staticmethod
+    def _observation_vector(
+        state: BehaviorModelState,
+        observation: Array,
+    ) -> Float[Array, " feature_dim"]:
+        """Narrow one event observation without accepting batch or keepdims axes."""
+        expected_shape = (state.weights.shape[1],)
+        actual_shape = tuple(jnp.shape(observation))
+        if actual_shape != expected_shape:
+            raise ValueError(
+                f"observation must have shape {expected_shape}, got {actual_shape}"
+            )
+        return jnp.asarray(observation, dtype=jnp.float32)
+
     @functools.partial(jax.jit, static_argnums=(0,))
     def predict_logits(
         self,
@@ -807,7 +821,7 @@ class BehaviorModel:
         observation: Array,
     ) -> Float[Array, " n_actions"]:
         """Predict behavior logits for one feature vector."""
-        obs = jnp.asarray(observation, dtype=jnp.float32)
+        obs = self._observation_vector(state, observation)
         return state.weights @ obs + state.bias
 
     @functools.partial(jax.jit, static_argnums=(0,))
@@ -884,7 +898,7 @@ class BehaviorModel:
     ) -> BehaviorModelInputGradient:
         """Execute one already identity-checked input-gradient transaction."""
         cfg = self._config
-        obs = jnp.asarray(observation, dtype=jnp.float32)
+        obs = self._observation_vector(state, observation)
         logits = state.weights @ obs + state.bias
         probabilities = _stable_temperature_softmax(logits, cfg.temperature)
         one_hot = jax.nn.one_hot(action_id, cfg.n_actions, dtype=jnp.float32)
@@ -955,7 +969,7 @@ class BehaviorModel:
     ) -> BehaviorModelUpdateResult:
         """Execute one already identity-checked atomic update."""
         cfg = self._config
-        obs = jnp.asarray(observation, dtype=jnp.float32)
+        obs = self._observation_vector(state, observation)
         logits = state.weights @ obs + state.bias
         probabilities = _stable_temperature_softmax(logits, cfg.temperature)
         one_hot = jax.nn.one_hot(action_id, cfg.n_actions, dtype=jnp.float32)
